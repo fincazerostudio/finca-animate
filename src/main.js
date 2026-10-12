@@ -1348,7 +1348,7 @@
     setLayerKeyEase(layer, frame, ease) {
       const k = layer && layer.transform.keyframes.find(k => k.frame === frame);
       if (!k) { this.ui.status('No transform keyframe on this frame'); return; }
-      this.doStruct('Keyframe easing', () => { k.ease = ease; });
+      this.doStruct('Keyframe easing', () => { k.ease = ease; delete k.curves; });
     }
     // Wrap a layer in a new folder that acts as its peg (Harmony's "-P"
     // naming). The folder takes the layer's slot; its transform moves,
@@ -1507,7 +1507,7 @@
     setCameraKeyEase(frame, ease) {
       const k = this.project.camera.keyframes.find(k => k.frame === frame);
       if (!k) { this.ui.status('No camera keyframe on this frame'); return; }
-      this.doStruct('Camera keyframe easing', () => { k.ease = ease; });
+      this.doStruct('Camera keyframe easing', () => { k.ease = ease; delete k.curves; });
     }
     clearCameraKeys() {
       if (!this.project.camera.keyframes.length) { this.ui.status('No camera keyframes'); return; }

@@ -46,9 +46,9 @@ Tracking parity with Toon Boom Harmony Advanced.
 - [x] Command-line batch render (`--render`)
 - [x] Linked palette colours (edit a swatch → linked strokes recolour)
 - [x] Line Art / Colour Art layers on vector drawings
+- [x] Function-curve editor (bezier easing, per channel)
 
 ## Next
-- [ ] Function-curve editor (Bezier easing per channel)
 - [ ] Bone rigging & mesh deformers
 - [ ] Node-based compositing view
 - [ ] Multiplane camera depth

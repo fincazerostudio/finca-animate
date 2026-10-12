@@ -50,7 +50,7 @@ const { launch, FILE } = require('./launch-browser.cjs');
                   p2.camera.keyframes.find(k => k.frame === 0).ease];
 
     // timeline right-click on the key offers the presets
-    const items = a.timeline._easeItems(l, 0).filter(i => i.label).map(i => i.label.trim());
+    const items = a.timeline._easeItems(l, 0).filter(i => i.label).map(i => i.label.trim()).filter(t => /Ease: /.test(t));   // ease presets (Edit Curve… is separate)
     out.menu = items;
     out.menuNoKey = a.timeline._easeItems(l, 3).length;
     return out;

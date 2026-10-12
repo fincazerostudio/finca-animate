@@ -58,6 +58,10 @@ per-user copy (see `BUILD.md`).
   export all stay transform-aware, including inside transformed folders
 - Per-keyframe easing — Linear, Smooth, Ease In, Ease Out or Hold
   (right-click a key in the timeline; camera keys in the Camera Editor)
+- Function-curve editor — right-click a key → Edit Curve… (camera:
+  Curve…): drag bezier handles for all channels or just position, scale,
+  rotation or zoom; dots show where each in-between frame lands; curves
+  can overshoot
 
 **Timeline / Xsheet**
 - Multi-layer timeline with exposure cells

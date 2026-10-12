@@ -33,7 +33,7 @@ const { launch, FILE } = require('./launch-browser.cjs');
     out.holdArrives = Math.abs(end.x - W / 2) < 1e-6 && Math.abs(end.y - (H / 2 + 200)) < 1e-6;
 
     // the timeline offers the ease menu on a folder row's key
-    out.folderMenu = a.timeline._easeItems(peg, 0).filter(i => i.label).length === 5;
+    out.folderMenu = a.timeline._easeItems(peg, 0).filter(i => i.label && /Ease: /.test(i.label)).length === 5;   // + Edit Curve…
 
     // moving the pivot keeps each key's ease
     a.selectLayer(peg); a.tools.select('transform'); a.setFrame(0);

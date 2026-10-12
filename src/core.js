@@ -16,7 +16,11 @@ window.OT = window.OT || {};
       ['linear', 'Linear'], ['smooth', 'Smooth'],
       ['in', 'Ease In'], ['out', 'Ease Out'], ['hold', 'Hold']
     ],
+    // `kind` is a preset name or a custom curve [x1, y1, x2, y2]: a cubic
+    // bezier from (0,0) to (1,1), like CSS cubic-bezier(). y may leave 0..1
+    // (overshoot / anticipation).
     ease(t, kind) {
+      if (Array.isArray(kind)) return U.cubicBezier(kind, t);
       switch (kind) {
         case 'linear': return t;
         case 'in': return t * t * t;
@@ -24,6 +28,39 @@ window.OT = window.OT || {};
         case 'hold': return t < 1 ? 0 : 1;
         default: return t * t * (3 - 2 * t);
       }
+    },
+    // The presets are exact cubic beziers (x linear in the curve parameter),
+    // so the curve editor can start from any of them. Hold has no curve.
+    EASE_CURVES: {
+      linear: [1 / 3, 1 / 3, 2 / 3, 2 / 3], smooth: [1 / 3, 0, 2 / 3, 1],
+      in: [1 / 3, 0, 2 / 3, 0], out: [1 / 3, 1, 2 / 3, 1]
+    },
+    cubicBezier(c, t) {
+      if (t <= 0) return 0; if (t >= 1) return 1;
+      const [x1, y1, x2, y2] = c;
+      const bz = (p1, p2, u) => 3 * (1 - u) * (1 - u) * u * p1 + 3 * (1 - u) * u * u * p2 + u * u * u;
+      // solve x(u) = t (x1, x2 are kept in 0..1, so x is monotonic): Newton, then bisection
+      let u = t;
+      for (let i = 0; i < 8; i++) {
+        const dx = bz(x1, x2, u) - t;
+        if (Math.abs(dx) < 1e-7) return bz(y1, y2, u);
+        const d = 3 * (1 - u) * (1 - u) * x1 + 6 * (1 - u) * u * (x2 - x1) + 3 * u * u * (1 - x2);
+        if (Math.abs(d) < 1e-6) break;
+        u -= dx / d;
+      }
+      let lo = 0, hi = 1; u = t;
+      for (let i = 0; i < 40; i++) {
+        const x = bz(x1, x2, u);
+        if (Math.abs(x - t) < 1e-7) break;
+        if (x < t) lo = u; else hi = u;
+        u = (lo + hi) / 2;
+      }
+      return bz(y1, y2, u);
+    },
+    // A key's curve for one channel group ('pos' | 'scale' | 'rot' | 'zoom'):
+    // the per-channel override if set, else the key's ease.
+    keyCurve(k, group) {
+      return (k.curves && k.curves[group] != null) ? k.curves[group] : k.ease;
     },
     dist(x1, y1, x2, y2) { const dx = x2 - x1, dy = y2 - y1; return Math.sqrt(dx * dx + dy * dy); },
     round(v, p) { const m = Math.pow(10, p || 0); return Math.round(v * m) / m; },
@@ -293,12 +330,14 @@ window.OT = window.OT || {};
       for (let i = 0; i < s.length - 1; i++) {
         const a = s[i], b = s[i + 1];
         if (f >= a.frame && f <= b.frame) {
-          const t = U.ease((f - a.frame) / (b.frame - a.frame), a.ease);
+          const u = (f - a.frame) / (b.frame - a.frame);
+          const tp = U.ease(u, U.keyCurve(a, 'pos')), ts = U.ease(u, U.keyCurve(a, 'scale')),
+            tr = U.ease(u, U.keyCurve(a, 'rot'));
           const A = N(a), B = N(b);
           return {
-            x: A.x + (B.x - A.x) * t, y: A.y + (B.y - A.y) * t,
-            sx: A.sx + (B.sx - A.sx) * t, sy: A.sy + (B.sy - A.sy) * t,
-            rot: A.rot + (B.rot - A.rot) * t
+            x: A.x + (B.x - A.x) * tp, y: A.y + (B.y - A.y) * tp,
+            sx: A.sx + (B.sx - A.sx) * ts, sy: A.sy + (B.sy - A.sy) * ts,
+            rot: A.rot + (B.rot - A.rot) * tr
           };
         }
       }
@@ -414,12 +453,13 @@ window.OT = window.OT || {};
       for (let i = 0; i < sorted.length - 1; i++) {
         const a = sorted[i], b = sorted[i + 1];
         if (f >= a.frame && f <= b.frame) {
-          const t = U.ease((f - a.frame) / (b.frame - a.frame), a.ease);
+          const u = (f - a.frame) / (b.frame - a.frame);
+          const tp = U.ease(u, U.keyCurve(a, 'pos'));
           return {
-            x: U.lerp(a.x || 0, b.x || 0, t),
-            y: U.lerp(a.y || 0, b.y || 0, t),
-            zoom: U.lerp(a.zoom || 1, b.zoom || 1, t),
-            rot: U.lerp(a.rot || 0, b.rot || 0, t)
+            x: U.lerp(a.x || 0, b.x || 0, tp),
+            y: U.lerp(a.y || 0, b.y || 0, tp),
+            zoom: U.lerp(a.zoom || 1, b.zoom || 1, U.ease(u, U.keyCurve(a, 'zoom'))),
+            rot: U.lerp(a.rot || 0, b.rot || 0, U.ease(u, U.keyCurve(a, 'rot')))
           };
         }
       }

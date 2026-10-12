@@ -1917,6 +1917,94 @@
       ]);
     }
 
+    // Function-curve editor for one keyframe: the easing of the segment to
+    // the next key, as a cubic bezier with two handles. Edits all channels
+    // or one channel group; dots show where each in-between frame lands.
+    // Live on the canvas; Apply = one undo step; Cancel / Esc reverts.
+    curveDialog(opts) {
+      const a = this.app, key = opts.key, cam = !opts.owner;
+      const list = cam ? a.project.camera.keyframes : opts.owner.transform.keyframes;
+      const next = list.filter(k => k.frame > key.frame).sort((m, n) => m.frame - n.frame)[0];
+      if (!next) { this.status('This is the last keyframe — the curve shapes the move to the next one. Add a key after it first.'); return; }
+      const span = next.frame - key.frame;
+      const before = a._structSnapshot();
+      const groups = cam ? [['all', 'All channels'], ['pos', 'Position'], ['zoom', 'Zoom'], ['rot', 'Rotation']]
+                         : [['all', 'All channels'], ['pos', 'Position'], ['scale', 'Scale'], ['rot', 'Rotation']];
+      const toCurve = e => Array.isArray(e) ? e.slice() : (U.EASE_CURVES[e || 'smooth'] || U.EASE_CURVES.smooth).slice();
+      let group = 'all';
+      const curveOf = g => toCurve(g === 'all' ? key.ease : U.keyCurve(key, g));
+      let cv = curveOf('all');
+
+      const S = 260, PAD = 34, R = S - PAD * 2;          // plot box, y range -0.25..1.25
+      const X = x => PAD + x * R, Y = y => PAD + (1 - (y + 0.25) / 1.5) * R;
+      const iX = px => (px - PAD) / R, iY = py => (1 - (py - PAD) / R) * 1.5 - 0.25;
+      const canvas = el('canvas', { width: S, height: S, style: { background: '#16181d', borderRadius: '6px', touchAction: 'none', cursor: 'default',
+        width: S + 'px', height: S + 'px', alignSelf: 'center', flex: 'none' } });
+      const g2 = canvas.getContext('2d');
+      const info = el('div', { class: 'chk-row', style: { fontVariantNumeric: 'tabular-nums' } });
+      const draw = () => {
+        g2.clearRect(0, 0, S, S);
+        g2.strokeStyle = '#2a2e36'; g2.lineWidth = 1;
+        g2.strokeRect(X(0), Y(1), R, Y(0) - Y(1));
+        for (let i = 1; i < span; i++) { g2.beginPath(); g2.moveTo(X(i / span), Y(-0.25)); g2.lineTo(X(i / span), Y(1.25)); g2.stroke(); }
+        // handles
+        g2.strokeStyle = '#5ab8f0aa'; g2.beginPath();
+        g2.moveTo(X(0), Y(0)); g2.lineTo(X(cv[0]), Y(cv[1]));
+        g2.moveTo(X(1), Y(1)); g2.lineTo(X(cv[2]), Y(cv[3])); g2.stroke();
+        // curve
+        g2.strokeStyle = '#f0a93d'; g2.lineWidth = 2; g2.beginPath();
+        for (let i = 0; i <= 80; i++) { const t = i / 80, y = U.cubicBezier(cv, t); i ? g2.lineTo(X(t), Y(y)) : g2.moveTo(X(t), Y(y)); }
+        g2.stroke();
+        // spacing dots: one per in-between frame
+        g2.fillStyle = '#e8e8e8';
+        for (let i = 1; i < span; i++) { const t = i / span; g2.beginPath(); g2.arc(X(t), Y(U.cubicBezier(cv, t)), 3, 0, 7); g2.fill(); }
+        for (const [hx, hy] of [[cv[0], cv[1]], [cv[2], cv[3]]]) {
+          g2.fillStyle = '#5ab8f0'; g2.beginPath(); g2.arc(X(hx), Y(hy), 6, 0, 7); g2.fill();
+        }
+        info.textContent = 'cubic-bezier(' + cv.map(v => v.toFixed(2)).join(', ') + ')  ·  ' + (span - 1) + ' in-between' + (span === 2 ? '' : 's');
+      };
+      const apply = () => {
+        if (group === 'all') { key.ease = cv.slice(); delete key.curves; }
+        else { key.curves = Object.assign({}, key.curves, { [group]: cv.slice() }); }
+        a.emit('render'); if (a.timeline) a.timeline.render();
+      };
+      let drag = -1;
+      const pos = e => { const r = canvas.getBoundingClientRect(); return { x: (e.clientX - r.left) * S / r.width, y: (e.clientY - r.top) * S / r.height }; };
+      canvas.addEventListener('pointerdown', e => {
+        const p = pos(e);
+        const d0 = Math.hypot(p.x - X(cv[0]), p.y - Y(cv[1])), d1 = Math.hypot(p.x - X(cv[2]), p.y - Y(cv[3]));
+        drag = Math.min(d0, d1) < 14 ? (d0 <= d1 ? 0 : 1) : -1;
+        if (drag >= 0) canvas.setPointerCapture(e.pointerId);
+      });
+      canvas.addEventListener('pointermove', e => {
+        if (drag < 0) return;
+        const p = pos(e);
+        cv[drag * 2] = U.clamp(iX(p.x), 0, 1);
+        cv[drag * 2 + 1] = U.clamp(iY(p.y), -0.25, 1.25);
+        draw(); apply();
+      });
+      canvas.addEventListener('pointerup', () => { drag = -1; });
+      const groupSel = el('select');
+      groups.forEach(([v, l]) => groupSel.appendChild(el('option', { value: v, text: l })));
+      groupSel.addEventListener('change', () => { group = groupSel.value; cv = curveOf(group); draw(); });
+      const presets = el('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
+        [['linear', 'Linear'], ['smooth', 'Smooth'], ['in', 'Ease In'], ['out', 'Ease Out']].map(([id, l]) => {
+          const b = el('button', { class: 'btn', text: l });
+          b.addEventListener('click', () => { cv = U.EASE_CURVES[id].slice(); draw(); apply(); });
+          return b;
+        }));
+      const body = el('div', { style: { display: 'flex', flexDirection: 'column', gap: '9px' } }, [
+        el('div', { class: 'chk-row', text: 'Frame ' + (key.frame + 1) + ' → ' + (next.frame + 1) + '. Drag the blue handles; dots are the in-between frames.' }),
+        this._field('Channel', groupSel), canvas, info, presets
+      ]);
+      draw();
+      let done = false;
+      this.modal('Curve — ' + (opts.label || 'keyframe'), body, [
+        { label: 'Cancel' },
+        { label: 'Apply', primary: true, fn: () => { done = true; a._commitStruct('Edit curve', before); } }
+      ], { onClose: () => { if (!done) { a._restoreStruct(before); a.emitAll(); } } });
+    }
+
     cameraDialog() {
       const a = this.app, p = a.project;
       const cur = p.cameraAt(a.frame);
@@ -1927,6 +2015,7 @@
       const easeSelect = (val) => {
         const s = el('select');
         U.EASES.forEach(([id, name]) => s.appendChild(el('option', { value: id, text: name })));
+        if (val === 'custom') s.appendChild(el('option', { value: 'custom', text: 'Custom curve', disabled: '' }));
         s.value = val || 'smooth';
         return s;
       };
@@ -1943,13 +2032,15 @@
             p.camera.keyframes = p.camera.keyframes.filter(kk => kk !== k);
             refresh(); a.emit('render');
           });
-          const kEase = easeSelect(k.ease);
+          const kEase = easeSelect(Array.isArray(k.ease) || k.curves ? 'custom' : k.ease);
           kEase.title = 'Easing into the next keyframe';
           kEase.addEventListener('change', () => { a.setCameraKeyEase(k.frame, kEase.value); refresh(); });
+          const curveBtn = el('button', { class: 'btn', text: 'Curve…', title: 'Edit the easing curve to the next keyframe' });
+          curveBtn.addEventListener('click', () => this.curveDialog({ key: k, label: 'Camera frame ' + (k.frame + 1) }));
           list.appendChild(el('div', { class: 'field-row' }, [
             el('span', {}, ['Frame ' + (k.frame + 1) + ' — pos ' + U.round(k.x, 0) + ',' + U.round(k.y, 0) +
               '  zoom ' + U.round(k.zoom, 2) + '  rot ' + U.round(k.rot, 0) + '°']),
-            kEase, del
+            kEase, curveBtn, del
           ]));
         });
       };
