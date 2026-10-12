@@ -197,7 +197,7 @@ works like (b):
   half-written.
 - **OS and sharing**: identical to (a) (single file, icon, double-click,
   email/upload).
-- **Cost**: two mechanisms instead of one (about two extra days), and the
+- **Cost**: two mechanisms instead of one, and the
   recovery folder uses disk in the settings folder while a scene is open
   (deleted when the scene is closed cleanly; old ones pruned).
 
@@ -216,7 +216,7 @@ works like (b):
 | Lazy loading | yes | yes (simplest) | yes |
 | Can be broken by poking inside | hard | easy | hard |
 | Windows many-small-files issues | none | yes | settings folder only |
-| Extra code vs. (a) | - | about the same | + ~2 days |
+| Extra code vs. (a) | - | about the same | more (two mechanisms) |
 
 ## 4. Things that work the same in every option
 
@@ -393,23 +393,17 @@ part of `test:files`) plus updates to existing suites:
    only; the Windows-specific rename retry is unit-tested with a simulated
    EBUSY.)
 
-## 9. Effort estimate
+## 9. Decision and expected results
 
-Counted in focused working days (Claude sessions plus Julio trying it):
+**Decided: option (a), a single zip `.finca` file.** The hybrid recovery
+layer from (c) can be added later without changing the format. "Export >
+OpenToon (.otoon)" is still undecided.
 
-| Piece | (a) | (b) | (c) |
-|---|---|---|---|
-| Scene split + v3 serializer, change tracking | 1.5 | 1.5 | 1.5 |
-| Container (zip with ZIP64 + raw copy / folder commit + cleanup) | 2 | 1.5 | 2 |
-| Journal + cheap history in settings folder | (0.5, plain) | (included) | 1.5 |
-| Lazy cel loading in the renderer | 1.5 | 1.5 | 1.5 |
-| Open/Save As/.otoon import + Export .otoon | 1 | 1.5 (folder dialogs) | 1 |
-| File-access IPC + phase0 tests, CLI | 1 | 1 | 1 |
-| File association, icon, Linux mime | 0.5 | n/a | 0.5 |
-| Tests, bench, docs, fixes | 1.5 | 1.5 | 2 |
-| **Total** | **~9.5 days** | **~9 days** | **~11 days** |
-
-Export > OpenToon (.otoon) is about half a day of that and can be dropped.
+Work pieces: scene split + v3 serializer with change tracking; zip container
+(ZIP64, raw copy of unchanged entries); plain autosave history; lazy cel
+loading; Open / Save As / `.otoon` import (+ optional export); file-access
+IPC, phase0 tests and CLI; file association, icon and Linux mime type;
+tests, bench and docs.
 
 Expected after the change (estimates to be verified by the bench): saving
 after a small edit goes from 2.5-4 s of frozen UI to well under 0.1 s; the
