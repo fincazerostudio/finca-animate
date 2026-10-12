@@ -44,6 +44,19 @@
       "pen/**/*",
       "fonts/**/*"
     ],
+    "extraFiles": [
+      {
+        "from": "LICENSE",
+        "to": "LICENSE.opentoon.txt"
+      },
+      {
+        "from": "fonts",
+        "to": "licenses/fonts",
+        "filter": [
+          "OFL-*.txt"
+        ]
+      }
+    ],
     "win": {
       "icon": "assets/icon.ico",
       "target": [
