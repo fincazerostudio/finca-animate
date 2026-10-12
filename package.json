@@ -12,7 +12,7 @@
     "publish": "electron-builder --win --publish always",
     "check-update": "node tools/check-update.cjs",
     "test:electron": "node tests/electron-smoke.cjs",
-    "test": "node tests/update-check.cjs && node tests/browsertest.cjs && node tests/vector.cjs && node tests/visual.cjs && node tests/pen.cjs && node tests/features2.cjs && node tests/easing.cjs && node tests/lighttable.cjs && node tests/transform.cjs && node tests/pegs.cjs"
+    "test": "node tests/update-check.cjs && node tests/browsertest.cjs && node tests/vector.cjs && node tests/visual.cjs && node tests/pen.cjs && node tests/features2.cjs && node tests/easing.cjs && node tests/lighttable.cjs && node tests/transform.cjs && node tests/pegs.cjs && node tests/combined.cjs"
   },
   "keywords": [
     "animation",
