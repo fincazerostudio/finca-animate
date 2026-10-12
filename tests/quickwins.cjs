@@ -94,6 +94,74 @@ const { launch, FILE } = require('./launch-browser.cjs');
     ['dragged corner lands under the mouse', !!res.boxScale && res.boxScale.brMiss < 6]
   ];
 
+  /* ---------- 2. Shift & Trace ---------- */
+  await page.evaluate(() => {
+    const a = window.OT.app, p = a.project, W = p.width, H = p.height;
+    a.addLayer('drawing'); const L = a.activeLayer(); L.name = 'ST';
+    a.setFrame(0);
+    const c = L.drawingAt(0, W, H); c.ctx.fillStyle = '#000'; c.ctx.fillRect(400, 300, 100, 100); c.dirty();
+    a.setFrame(1); a.newDrawing();                      // empty frame to trace on
+    a.onion.on = false; a.onion.prev = 1; a.onion.next = 0;
+    a.tools.select('brush');
+    window.__st = L.id;
+    // onion skin as drawn on the stage, in project space
+    window.T.onionAt = (x, y) => {
+      const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+      const ctx = cv.getContext('2d');
+      a.stage._drawOnion(ctx);
+      return ctx.getImageData(x, y, 1, 1).data[3] > 0;
+    };
+    a.emit('render');
+  });
+  await page.evaluate(() => { if (document.activeElement) document.activeElement.blur(); window.focus(); });
+  await page.keyboard.press('Alt+s');
+  await page.waitForTimeout(100);
+  res.st = await page.evaluate(() => {
+    const a = window.OT.app;
+    return { on: a.shiftTrace.on, onion: a.onion.on, tool: a.tools.active.name, before: window.T.onionAt(450, 350) };
+  });
+  {
+    const pts = await page.evaluate(() => ({ from: window.T.client(450, 350), to: window.T.client(750, 350) }));
+    await drag(pts.from, pts.to);
+  }
+  res.stMove = await page.evaluate(() => {
+    const a = window.OT.app, L = a.project.layers.find(l => l.id === window.__st);
+    const d = L.cels[L.exposure[0]].ctx.getImageData(450, 350, 1, 1).data;
+    return { x: Math.round(a.shiftTrace.x), y: Math.round(a.shiftTrace.y),
+             shifted: window.T.onionAt(750, 350), oldSpot: window.T.onionAt(450, 350),
+             drawingUntouched: d[3] === 255,
+             pen: a.penCast && a.penCast._meta ? a.penCast._meta().shiftTrace : 'n/a' };
+  });
+  // Shift-drag rotates, Alt-drag scales (about the canvas centre)
+  {
+    const pts = await page.evaluate(() => {
+      const p = window.OT.app.project, cx = p.width / 2, cy = p.height / 2;
+      return { a: window.T.client(cx + 300 + 400, cy), b: window.T.client(cx + 300, cy + 400),
+               c: window.T.client(cx + 300 + 200, cy), d: window.T.client(cx + 300 + 400, cy) };
+    });
+    await page.keyboard.down('Shift'); await drag(pts.a, pts.b); await page.keyboard.up('Shift');
+    await page.keyboard.down('Alt'); await drag(pts.c, pts.d); await page.keyboard.up('Alt');
+  }
+  res.stRS = await page.evaluate(() => ({ rot: Math.round(window.OT.app.shiftTrace.rot), scale: +window.OT.app.shiftTrace.scale.toFixed(2) }));
+  await page.keyboard.press('Alt+s');
+  await page.waitForTimeout(100);
+  res.stOff = await page.evaluate(() => {
+    const a = window.OT.app, st = a.shiftTrace;
+    return { on: st.on, reset: st.x === 0 && st.y === 0 && st.rot === 0 && st.scale === 1,
+             tool: a.tools.active.name, back: window.T.onionAt(450, 350) };
+  });
+  checks.push(
+    ['Alt+S turns on Shift & Trace, onion skin and its tool', res.st.on && res.st.onion && res.st.tool === 'shifttrace'],
+    ['reference visible before shifting', res.st.before],
+    ['drag moves the onion reference', res.stMove.x === 300 && res.stMove.y === 0 && res.stMove.shifted && !res.stMove.oldSpot],
+    ['the drawing itself is untouched', res.stMove.drawingUntouched],
+    ['pen window gets the offset', res.stMove.pen === 'n/a' || (res.stMove.pen && Math.round(res.stMove.pen.x) === res.stMove.x)],
+    ['Shift-drag rotates the reference', res.stRS.rot === 90],
+    ['Alt-drag scales the reference', res.stRS.scale === 2],
+    ['Alt+S again resets and returns to the previous tool',
+      !res.stOff.on && res.stOff.reset && res.stOff.tool === 'brush' && res.stOff.back]
+  );
+
   // (later sections append to `checks` above this line)
   checks.push(['no page errors', errors.length === 0]);
   let fail = 0;

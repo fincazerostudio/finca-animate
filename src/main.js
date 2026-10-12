@@ -135,6 +135,7 @@
     { id: 'fit', label: 'Fit to camera', cat: 'View', def: 'shift+\\', run: a => a.stage.fitToCamera() },
     { id: 'flip-h', label: 'Flip view horizontally', cat: 'View', def: 'shift+m', run: a => a.toggleFlipH() },
     { id: 'light-table', label: 'Light table', cat: 'View', def: 'alt+l', noRepeat: 1, run: a => a.toggleLightTable() },
+    { id: 'shift-trace', label: 'Shift & Trace', cat: 'View', def: 'alt+s', noRepeat: 1, run: a => a.toggleShiftTrace() },
     { id: 'clean-view', label: 'Clean canvas (hide panels)', cat: 'View', def: 'tab', prevent: 1, noRepeat: 1, run: a => a.toggleCleanView() }
   ];
   OT.KEY_COMMANDS = KEY_COMMANDS;
@@ -212,6 +213,9 @@
       // the active one; off = the active layer is drawn alone (Harmony's
       // Drawing view). Preview only -- export and playback ignore it.
       this.lightTable = { on: true, opacity: 0.3 };
+      // Shift & Trace: temporarily offset the onion-skin drawings to trace
+      // from them; never touches the drawings and resets when turned off.
+      this.shiftTrace = { on: false, x: 0, y: 0, rot: 0, scale: 1 };
       this.showCamera = true;
       this.cleanView = false;
       this.grid = { on: false, size: 64, guides: false };
@@ -1493,6 +1497,25 @@
       this.showCamera = !this.showCamera;
       this.emit('render');
       this.ui.status('Camera guide ' + (this.showCamera ? 'on' : 'off'));
+    }
+    toggleShiftTrace() {
+      const st = this.shiftTrace;
+      if (st.on) {
+        Object.assign(st, { on: false, x: 0, y: 0, rot: 0, scale: 1 });
+        if (this.tools.active.name === 'shifttrace') this.tools.select(this._stPrevTool || 'brush');
+        this.ui.status('Shift & Trace off — reference back in place');
+      } else {
+        st.on = true;
+        if (!this.onion.on) { this.onion.on = true; this.emit('onionchange'); }
+        this._stPrevTool = this.tools.active.name;
+        this.tools.select('shifttrace');
+      }
+      this.emit('shifttracechange'); this.emit('render');
+    }
+    resetShiftTrace() {
+      Object.assign(this.shiftTrace, { x: 0, y: 0, rot: 0, scale: 1 });
+      this.emit('shifttracechange'); this.emit('render');
+      this.ui.status('Shift & Trace reset');
     }
     toggleOnion() {
       this.onion.on = !this.onion.on;

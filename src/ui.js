@@ -33,7 +33,7 @@
     ['sep'], ['hand', 'H'], ['zoom', 'Z']
   ];
   const TOOL_NAME = {
-    select: 'Select Pixels', lasso: 'Lasso Select', transform: 'Transform Layer (Cut-out)',
+    select: 'Select Pixels', lasso: 'Lasso Select', transform: 'Transform Layer (Cut-out)', shifttrace: 'Shift & Trace',
     brush: 'Brush', pencil: 'Pencil', eraser: 'Eraser',
     fill: 'Paint Bucket', eyedropper: 'Eyedropper', rect: 'Rectangle',
     ellipse: 'Ellipse', line: 'Line', hand: 'Pan', zoom: 'Zoom'
@@ -156,6 +156,8 @@
           { label: (a.showCamera ? '✓ ' : '') + 'Camera Guide', fn: () => a.toggleCamera() },
           { label: (a.onion.on ? '✓ ' : '') + 'Onion Skin', fn: () => a.toggleOnion() },
           { label: 'Onion Skin Settings…', fn: () => this.onionDialog() },
+          { label: (a.shiftTrace.on ? '✓ ' : '') + 'Shift & Trace', sc: 'Alt+S', fn: () => a.toggleShiftTrace() },
+          { label: 'Reset Shift & Trace', fn: () => a.resetShiftTrace() },
           { label: (a.lightTable.on ? '✓ ' : '') + 'Light Table', sc: 'Alt+L', fn: () => a.toggleLightTable() },
           { label: 'Light Table Strength…', fn: () => this.lightTableDialog() },
           { sep: 1 },

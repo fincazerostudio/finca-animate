@@ -1916,6 +1916,51 @@
     }
   }
 
+  /* ============================== shift & trace ============================== */
+  // Moves the onion-skin reference (not the drawings): drag = move,
+  // Shift-drag = rotate, Alt-drag = scale, all about the canvas centre.
+  class ShiftTraceTool extends Tool {
+    constructor() { super('shifttrace'); }
+    onActivate(app) {
+      app.ui.status('Shift & Trace: drag to move the reference · Shift-drag rotates · Alt-drag scales · B to draw · Alt+S to finish');
+    }
+    pointerDown(pt, e, app) {
+      if (!app.shiftTrace.on) { app.ui.status('Turn on Shift & Trace (Alt+S)'); return; }
+      const p = app.project;
+      this.c = { x: p.width / 2 + app.shiftTrace.x, y: p.height / 2 + app.shiftTrace.y };
+      this.s0 = Object.assign({}, app.shiftTrace);
+      this.p0 = { x: pt.x, y: pt.y };
+      this.mode = pt.shift ? 'rotate' : pt.alt ? 'scale' : 'move';
+    }
+    pointerMove(pt, e, app) {
+      if (!this.mode) return;
+      const st = app.shiftTrace, s0 = this.s0, c = this.c;
+      if (this.mode === 'move') {
+        st.x = s0.x + pt.x - this.p0.x; st.y = s0.y + pt.y - this.p0.y;
+      } else if (this.mode === 'rotate') {
+        const a0 = Math.atan2(this.p0.y - c.y, this.p0.x - c.x), a1 = Math.atan2(pt.y - c.y, pt.x - c.x);
+        st.rot = s0.rot + (a1 - a0) * 180 / Math.PI;
+      } else {
+        const d0 = Math.hypot(this.p0.x - c.x, this.p0.y - c.y) || 1;
+        st.scale = U.clamp(s0.scale * Math.hypot(pt.x - c.x, pt.y - c.y) / d0, 0.05, 20);
+      }
+      app.emit('shifttracechange'); app.emit('render'); app.emit('overlayrender');
+    }
+    pointerUp() { this.mode = null; }
+    drawOverlay(ctx, app) {
+      if (!app.shiftTrace.on) return;
+      const p = app.project, m = OT.Peg.shiftTrace(app.shiftTrace, p), z = app.stage.view.zoom;
+      const q = [[0, 0], [p.width, 0], [p.width, p.height], [0, p.height]].map(([x, y]) => OT.Peg.apply(m, x, y));
+      ctx.save();
+      ctx.lineWidth = 1.5 / z; ctx.strokeStyle = '#4fc3f7';
+      ctx.setLineDash([8 / z, 5 / z]);
+      ctx.beginPath(); ctx.moveTo(q[0].x, q[0].y);
+      for (let i = 1; i < 4; i++) ctx.lineTo(q[i].x, q[i].y);
+      ctx.closePath(); ctx.stroke();
+      ctx.restore();
+    }
+  }
+
   /* ============================== select ============================== */
   class SelectTool extends Tool {
     constructor() {
@@ -4110,6 +4155,7 @@
         new SelectTool(),
         new LassoTool(),
         new TransformTool(),
+        new ShiftTraceTool(),
         new PaintTool('brush'),
         new PencilTool(),
         new PaintTool('eraser'),

@@ -459,6 +459,15 @@ window.OT = window.OT || {};
         m = m.multiply(Peg.local(ancestors[i], frame, project));
       return m;
     },
+    // Shift & Trace: a view-only offset applied to onion-skin drawings,
+    // rotated / scaled about the canvas centre. Identity when off.
+    shiftTrace(st, project) {
+      const m = new DOMMatrix();
+      if (!st || !st.on) return m;
+      const cx = project.width / 2, cy = project.height / 2;
+      return m.translate(st.x + cx, st.y + cy).multiply(Peg.rs(st.rot, st.scale, st.scale))
+        .translate(-cx, -cy);
+    },
     apply(m, x, y) { return { x: m.a * x + m.c * y + m.e, y: m.b * x + m.d * y + m.f }; },
     applyDelta(m, dx, dy) { return { dx: m.a * dx + m.c * dy, dy: m.b * dx + m.d * dy }; }
   };

@@ -213,6 +213,7 @@
       const layer = app.activeLayer();
       if (!layer) return;
       const f = app.frame;
+      const st = app.shiftTrace || {}, stm = OT.Peg.shiftTrace(st, app.project);
       const drawSet = (count, dir, color) => {
         for (let i = 1; i <= count; i++) {
           const fr = f + dir * i;
@@ -222,6 +223,7 @@
           const a = U.lerp(o.maxAlpha, o.minAlpha, (i - 1) / Math.max(1, count - 1));
           ctx.globalAlpha = a;
           ctx.save();
+          if (st.on) ctx.transform(stm.a, stm.b, stm.c, stm.d, stm.e, stm.f);
           this._layerXform(ctx, layer, fr);
           ctx.drawImage(this._tinted(cel, color), 0, 0,
             this.app.project.width, this.app.project.height);

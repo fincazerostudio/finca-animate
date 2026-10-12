@@ -813,6 +813,11 @@
         if (sig(this.state.lightTable) !== sig(meta.lightTable)) this._baseCacheDirty = true;
         this.state.lightTable = meta.lightTable;
       }
+      if ('shiftTrace' in meta) {
+        const sig = o => o && o.on ? [o.x, o.y, o.rot, o.scale].join('|') : '';
+        if (sig(this.state.shiftTrace) !== sig(meta.shiftTrace)) this._baseCacheDirty = true;
+        this.state.shiftTrace = meta.shiftTrace;
+      }
       if ('onion' in meta) {
         const prev = this.state.onion;
         const next = meta.onion;
@@ -1216,6 +1221,8 @@
             : (o.maxAlpha + (o.minAlpha - o.maxAlpha) * ((i - 1) / (count - 1)));
           ctx.save();
           ctx.globalAlpha = a;
+          const stm = OT.Peg.shiftTrace(s.shiftTrace, s.project);
+          if (!stm.isIdentity) ctx.transform(stm.a, stm.b, stm.c, stm.d, stm.e, stm.f);
           // Layer transform: same world xform that the active layer uses
           // when compositing — keeps onion aligned with the live composite.
           if (OT.applyWorldXform)
