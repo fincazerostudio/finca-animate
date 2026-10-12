@@ -1498,6 +1498,14 @@
       this.emit('render');
       this.ui.status('Camera guide ' + (this.showCamera ? 'on' : 'off'));
     }
+    togglePerspective() {
+      const g = this.project.perspective;
+      g.on = !g.on;
+      if (!g.on && this.tools.active.name === 'perspective') this.tools.select('brush');
+      this.dirty = true;
+      this.emit('render');
+      this.ui.status('Perspective guides ' + (g.on ? 'on' : 'off'));
+    }
     toggleShiftTrace() {
       const st = this.shiftTrace;
       if (st.on) {

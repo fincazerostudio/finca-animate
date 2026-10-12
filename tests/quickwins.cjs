@@ -162,6 +162,77 @@ const { launch, FILE } = require('./launch-browser.cjs');
       !res.stOff.on && res.stOff.reset && res.stOff.tool === 'brush' && res.stOff.back]
   );
 
+  /* ---------- 3. perspective guides ---------- */
+  res.pv0 = await page.evaluate(() => {
+    const a = window.OT.app, p = a.project, g = p.perspective;
+    const out = { defaultOff: g.on === false };
+    a.togglePerspective();
+    out.on = g.on;
+    a.tools.select('perspective'); a.emit('render');
+    // what the overlay draws, in project space
+    window.T.persp = (x, y) => {
+      const cv = document.createElement('canvas'); cv.width = p.width; cv.height = p.height;
+      const ctx = cv.getContext('2d'); a.stage._drawPerspective(ctx);
+      return ctx.getImageData(x, y, 1, 1).data;
+    };
+    const hz = window.T.persp(p.width / 2, Math.round(0.42 * p.height));
+    out.horizon = hz[3] > 0 && hz[0] > hz[2];          // amber line
+    let red = 0, blue = 0;
+    for (let x = 0; x < p.width; x += 4) {
+      const d = window.T.persp(x, Math.round(p.height * 0.85));
+      if (d[3] && d[0] > d[2]) red++; if (d[3] && d[2] > d[0]) blue++;
+    }
+    out.rays = [red, blue];
+    return out;
+  });
+  {
+    // drag vp2 right and down: horizon stays level (vp1 follows in v)
+    const pts = await page.evaluate(() => {
+      const p = window.OT.app.project, g = p.perspective;
+      const v = { x: g.vp2.u * p.width, y: g.vp2.v * p.height };
+      return { from: window.T.client(v.x, v.y), to: window.T.client(v.x - 100, v.y + 54) };
+    });
+    await drag(pts.from, pts.to);
+    res.pvDrag = await page.evaluate(() => JSON.parse(JSON.stringify(window.OT.app.project.perspective)));
+    // Shift-drag tilts: only vp1 moves
+    const pts2 = await page.evaluate(() => {
+      const p = window.OT.app.project, g = p.perspective;
+      const v = { x: g.vp1.u * p.width, y: g.vp1.v * p.height };
+      return { from: window.T.client(v.x, v.y), to: window.T.client(v.x, v.y - 108) };
+    });
+    await page.keyboard.down('Shift'); await drag(pts2.from, pts2.to); await page.keyboard.up('Shift');
+    res.pvTilt = await page.evaluate(() => JSON.parse(JSON.stringify(window.OT.app.project.perspective)));
+    // drag empty space: horizon (both VPs) moves together
+    const pts3 = await page.evaluate(() => ({ from: window.T.client(960, 900), to: window.T.client(960, 846) }));
+    await drag(pts3.from, pts3.to);
+    res.pvHorizon = await page.evaluate(() => JSON.parse(JSON.stringify(window.OT.app.project.perspective)));
+  }
+  res.pvIO = await page.evaluate(async () => {
+    const a = window.OT.app, p = a.project, g = p.perspective;
+    g.mode = 1; a.emit('render');
+    let blue = 0;
+    for (let x = 0; x < p.width; x += 4) { const d = window.T.persp(x, Math.round(p.height * 0.85)); if (d[3] && d[2] > d[0]) blue++; }
+    const data = JSON.parse(JSON.stringify(window.OT.IO.serialize(a)));
+    const p2 = (await window.OT.IO.deserialize(data)).project;
+    const old = JSON.parse(JSON.stringify(data)); delete old.perspective;
+    const p3 = (await window.OT.IO.deserialize(old)).project;
+    return { onePointBlue: blue, saved: JSON.stringify(p2.perspective) === JSON.stringify(g),
+             oldFileDefault: p3.perspective && p3.perspective.on === false };
+  });
+  const r3 = v => Math.round(v * 1000) / 1000;
+  checks.push(
+    ['perspective guides off by default, toggle on', res.pv0.defaultOff && res.pv0.on],
+    ['horizon line drawn', res.pv0.horizon],
+    ['rays fan from both vanishing points', res.pv0.rays[0] > 3 && res.pv0.rays[1] > 3],
+    ['dragging a VP moves it', r3(res.pvDrag.vp2.u) === r3(0.94 - 100 / 1920) && r3(res.pvDrag.vp2.v) === r3(0.42 + 54 / 1080)],
+    ['2-point horizon stays level', r3(res.pvDrag.vp1.v) === r3(res.pvDrag.vp2.v) && r3(res.pvDrag.vp1.u) === 0.06],
+    ['Shift-drag tilts the horizon (one VP only)', r3(res.pvTilt.vp1.v) === r3(res.pvDrag.vp1.v - 0.1) && r3(res.pvTilt.vp2.v) === r3(res.pvDrag.vp2.v)],
+    ['dragging elsewhere moves the horizon', r3(res.pvHorizon.vp1.v) === r3(res.pvTilt.vp1.v - 0.05) && r3(res.pvHorizon.vp2.v) === r3(res.pvTilt.vp2.v - 0.05)],
+    ['1-point mode draws one fan', res.pvIO.onePointBlue === 0],
+    ['saved with the project', res.pvIO.saved],
+    ['older files load with guides off', res.pvIO.oldFileDefault]
+  );
+
   // (later sections append to `checks` above this line)
   checks.push(['no page errors', errors.length === 0]);
   let fail = 0;

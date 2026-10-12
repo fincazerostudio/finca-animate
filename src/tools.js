@@ -1961,6 +1961,46 @@
     }
   }
 
+  /* ============================== perspective guides ============================== */
+  // Edits the scene's perspective guides: drag a vanishing point to move
+  // it; drag anywhere else to raise / lower the horizon (both VPs).
+  class PerspectiveTool extends Tool {
+    constructor() { super('perspective'); }
+    onActivate(app) {
+      const g = app.project.perspective;
+      if (!g.on) { g.on = true; app.emit('render'); }
+      app.ui.status('Perspective: drag a vanishing point to move it · drag elsewhere to move the horizon');
+      app.emit('overlayrender');
+    }
+    pointerDown(pt, e, app) {
+      const p = app.project, g = p.perspective, W = p.width, H = p.height;
+      const thr = 14 / app.stage.view.zoom;
+      const vps = g.mode === 2 ? ['vp1', 'vp2'] : ['vp1'];
+      this.key = vps.find(k => U.dist(pt.x, pt.y, g[k].u * W, g[k].v * H) < thr) || null;
+      this.p0 = { x: pt.x, y: pt.y };
+      this.g0 = JSON.parse(JSON.stringify(g));
+      this.down = true;
+    }
+    pointerMove(pt, e, app) {
+      if (!this.down) return;
+      const p = app.project, g = p.perspective, g0 = this.g0;
+      const du = (pt.x - this.p0.x) / p.width, dv = (pt.y - this.p0.y) / p.height;
+      if (this.key) {
+        g[this.key].u = g0[this.key].u + du;
+        g[this.key].v = g0[this.key].v + dv;
+        // keep a 2-point horizon level unless Shift is held (tilted horizon)
+        if (g.mode === 2 && !pt.shift) {
+          const other = this.key === 'vp1' ? 'vp2' : 'vp1';
+          g[other].v = g[this.key].v;
+        }
+      } else {
+        g.vp1.v = g0.vp1.v + dv; g.vp2.v = g0.vp2.v + dv;
+      }
+      app.emit('render'); app.emit('overlayrender');
+    }
+    pointerUp(pt, e, app) { this.down = false; this.key = null; app.dirty = true; }
+  }
+
   /* ============================== select ============================== */
   class SelectTool extends Tool {
     constructor() {
@@ -4156,6 +4196,7 @@
         new LassoTool(),
         new TransformTool(),
         new ShiftTraceTool(),
+        new PerspectiveTool(),
         new PaintTool('brush'),
         new PencilTool(),
         new PaintTool('eraser'),

@@ -33,7 +33,7 @@
     ['sep'], ['hand', 'H'], ['zoom', 'Z']
   ];
   const TOOL_NAME = {
-    select: 'Select Pixels', lasso: 'Lasso Select', transform: 'Transform Layer (Cut-out)', shifttrace: 'Shift & Trace',
+    select: 'Select Pixels', lasso: 'Lasso Select', transform: 'Transform Layer (Cut-out)', shifttrace: 'Shift & Trace', perspective: 'Perspective Guides',
     brush: 'Brush', pencil: 'Pencil', eraser: 'Eraser',
     fill: 'Paint Bucket', eyedropper: 'Eyedropper', rect: 'Rectangle',
     ellipse: 'Ellipse', line: 'Line', hand: 'Pan', zoom: 'Zoom'
@@ -165,7 +165,11 @@
           { label: (a.stage && a.stage.flipV ? '✓ ' : '') + 'Flip View Vertical', fn: () => a.toggleFlipV() },
           { label: (a.grid && a.grid.on ? '✓ ' : '') + 'Grid', fn: () => a.toggleGrid() },
           { label: (a.symmetry && a.symmetry.on ? '✓ ' : '') + 'Symmetry / Mirror Drawing', fn: () => a.toggleSymmetry() },
-          { label: 'Grid, Guides & Symmetry…', fn: () => this.gridDialog() }
+          { label: 'Grid, Guides & Symmetry…', fn: () => this.gridDialog() },
+          { sep: 1 },
+          { label: (a.project.perspective.on ? '✓ ' : '') + 'Perspective Guides', fn: () => a.togglePerspective() },
+          { label: 'Edit Perspective Guides', fn: () => a.tools.select('perspective') },
+          { label: 'Perspective Settings…', fn: () => this.perspectiveDialog() }
         ]],
         ['Animation', [
           { label: 'Play / Stop', sc: 'Enter', fn: () => a.playback.toggle() },
@@ -1668,6 +1672,29 @@
             a.emit('render');
           }
         }
+      ]);
+    }
+
+    perspectiveDialog() {
+      const a = this.app, g = a.project.perspective;
+      const mode = el('select');
+      [['1-point', 1], ['2-point', 2]].forEach(([l, v]) => mode.appendChild(el('option', { value: v }, [l])));
+      mode.value = g.mode;
+      const lines = el('input', { type: 'range', min: 4, max: 48, step: 1, value: g.lines });
+      const live = () => {
+        g.mode = parseInt(mode.value, 10) === 1 ? 1 : 2;
+        g.lines = parseInt(lines.value, 10);
+        g.on = true; a.dirty = true; a.emit('render');
+      };
+      mode.addEventListener('change', live); lines.addEventListener('input', live);
+      const body = el('div', { style: { display: 'flex', flexDirection: 'column', gap: '9px' } }, [
+        el('div', { class: 'chk-row', text: 'Saved with the scene. Use View → Edit Perspective Guides to drag the vanishing points.' }),
+        this._field('Type', mode),
+        this._field('Line density', lines)
+      ]);
+      this.modal('Perspective Guides', body, [
+        { label: 'Reset', fn: () => { a.project.perspective = OT.Project.defaultPerspective(); a.project.perspective.on = true; a.emit('render'); } },
+        { label: 'Close', primary: true }
       ]);
     }
 

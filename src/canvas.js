@@ -298,6 +298,7 @@
       ctx.strokeRect(0, 0, p.width, p.height);
 
       if (this.app.grid && this.app.grid.on) this._drawGrid(ctx);
+      if (p.perspective && p.perspective.on) this._drawPerspective(ctx);
       if (this.app.symmetry && this.app.symmetry.on) this._drawSymmetry(ctx);
       if (this.app.showCamera !== false) this._drawCameraGuide(ctx);
 
@@ -354,6 +355,54 @@
         ctx.stroke();
       }
       ctx.restore();
+    }
+    // Perspective guides: a fan of rays from each vanishing point through
+    // evenly spaced points round the paper edge, plus the horizon, all
+    // clipped to the paper. 1-point uses vp1 only.
+    _drawPerspective(ctx) {
+      const p = this.app.project, g = p.perspective, z = this.view.zoom;
+      const W = p.width, H = p.height;
+      const vps = [g.vp1].concat(g.mode === 2 ? [g.vp2] : []).map(v => ({ x: v.u * W, y: v.v * H }));
+      const n = Math.max(4, g.lines | 0);
+      const per = 2 * (W + H), edge = t => {           // t in [0, per): walk the paper border
+        if (t < W) return { x: t, y: 0 }; t -= W;
+        if (t < H) return { x: W, y: t }; t -= H;
+        if (t < W) return { x: W - t, y: H }; t -= W;
+        return { x: 0, y: H - t };
+      };
+      ctx.save();
+      ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.clip();
+      ctx.lineWidth = 1 / z;
+      const far = 4 * (W + H);
+      ['rgba(216,80,72,0.38)', 'rgba(72,128,216,0.38)'].forEach((col, i) => {
+        const v = vps[i]; if (!v) return;
+        ctx.strokeStyle = col;
+        ctx.beginPath();
+        for (let k = 0; k < n * 2; k++) {
+          const e = edge((k + 0.5) * per / (n * 2));
+          const dx = e.x - v.x, dy = e.y - v.y, d = Math.hypot(dx, dy) || 1;
+          ctx.moveTo(v.x, v.y); ctx.lineTo(v.x + dx / d * far, v.y + dy / d * far);
+        }
+        ctx.stroke();
+      });
+      // horizon: through both VPs (2-point) or level through vp1
+      const a = vps[0], b = vps[1] || { x: a.x + 1, y: a.y };
+      const hx = b.x - a.x, hy = b.y - a.y, hd = Math.hypot(hx, hy) || 1;
+      ctx.strokeStyle = 'rgba(232,162,58,0.9)'; ctx.lineWidth = 1.5 / z;
+      ctx.beginPath();
+      ctx.moveTo(a.x - hx / hd * far, a.y - hy / hd * far); ctx.lineTo(a.x + hx / hd * far, a.y + hy / hd * far);
+      ctx.stroke();
+      ctx.restore();
+      // vanishing-point handles (drawn unclipped: they often sit off the paper)
+      if (this.app.tools && this.app.tools.active.name === 'perspective') {
+        ctx.save();
+        ctx.lineWidth = 1.5 / z;
+        vps.forEach((v, i) => {
+          ctx.fillStyle = i ? '#4880d8' : '#d85048'; ctx.strokeStyle = '#fff';
+          ctx.beginPath(); ctx.arc(v.x, v.y, 7 / z, 0, 7); ctx.fill(); ctx.stroke();
+        });
+        ctx.restore();
+      }
     }
     _drawSymmetry(ctx) {
       const p = this.app.project, s = this.app.symmetry, z = this.view.zoom;

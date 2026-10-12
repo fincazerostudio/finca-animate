@@ -111,6 +111,7 @@
       palette: app.palette.serialize(),
       camera: { keyframes: p.camera.keyframes.map(k => ({ ...k })) },
       audio: p.audio || null,
+      perspective: p.perspective,
       workspace: captureWorkspace(app),
       layers: p.layers.map(l => {
         const cels = {};
@@ -142,6 +143,7 @@
     });
     p.camera = data.camera || { keyframes: [] };
     p.audio = data.audio || null;
+    if (data.perspective && data.perspective.vp1) p.perspective = Object.assign(OT.Project.defaultPerspective(), data.perspective);
     for (const ld of data.layers || []) {
       const layer = new OT.Layer(ld.name, ld.type);
       layer.id = ld.id || layer.id;

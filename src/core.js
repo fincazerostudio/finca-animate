@@ -373,9 +373,16 @@ window.OT = window.OT || {};
       this.bg = opts.bg || '#ffffff';
       this.layers = [];
       this.camera = { keyframes: [] };  // {frame,x,y,zoom,rot,ease?}
+      this.perspective = Project.defaultPerspective();
       if (!opts.empty) {
         this.layers.push(new Layer('Drawing 1', 'vector'));
       }
+    }
+    // Perspective guides belong to the scene, so they're saved with it.
+    // Vanishing points are fractions of the canvas (u, v), so they stay put
+    // through a canvas resize; they may sit outside 0..1 (off the paper).
+    static defaultPerspective() {
+      return { on: false, mode: 2, lines: 18, vp1: { u: 0.06, v: 0.42 }, vp2: { u: 0.94, v: 0.42 } };
     }
     addLayer(layer, index) {
       if (index == null) index = this.layers.length;
