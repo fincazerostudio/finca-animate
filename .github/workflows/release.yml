@@ -105,5 +105,10 @@ jobs:
         run: |
           notes=".github/release-notes/${TAG}.md"
           [ -f "$notes" ] || notes=/dev/null
+          # Beta versions: electron-updater may look for beta*.yml instead of latest*.yml,
+          # so publish both (same content).
+          case "$TAG" in *-beta*)
+            for f in out/latest*.yml; do cp "$f" "out/beta${f#out/latest}"; done ;;
+          esac
           ls -la out
           gh release create "$TAG" out/* --draft --title "Finca Animate ${TAG#v}" --notes-file "$notes"
