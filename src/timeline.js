@@ -1324,6 +1324,20 @@
       c.fill();
       c.restore();
 
+      // transform (cut-out / peg) keyframe diamonds along a row
+      const drawKeys = (layer, y) => {
+        if (!layer.transform || !layer.transform.keyframes.length) return;
+        c.fillStyle = '#f0a93d';
+        for (const k of layer.transform.keyframes) {
+          if (k.frame < 0 || k.frame >= p.frameCount) continue;
+          const kx = k.frame * cw + cw / 2, ky = y + rh - 5;
+          c.beginPath();
+          c.moveTo(kx, ky - 4); c.lineTo(kx + 4, ky);
+          c.lineTo(kx, ky + 4); c.lineTo(kx - 4, ky);
+          c.closePath(); c.fill();
+        }
+      };
+
       // rows
       for (let r = 0; r < L.length; r++) {
         const layer = this.rowToLayer(r);
@@ -1339,6 +1353,7 @@
         if (layer.type === 'group') {
           c.fillStyle = this._alpha(layer.color || '#c8a04a', 0.10);
           c.fillRect(0, y, w, rh);
+          drawKeys(layer, y);     // a folder is a peg: show its keys
           continue;
         }
         // video layer film strip
@@ -1472,18 +1487,7 @@
           }
           f = e + 1;
         }
-        // transform (cut-out) keyframes
-        if (layer.transform && layer.transform.keyframes.length) {
-          c.fillStyle = '#f0a93d';
-          for (const k of layer.transform.keyframes) {
-            if (k.frame < 0 || k.frame >= p.frameCount) continue;
-            const kx = k.frame * cw + cw / 2, ky = y + rh - 5;
-            c.beginPath();
-            c.moveTo(kx, ky - 4); c.lineTo(kx + 4, ky);
-            c.lineTo(kx, ky + 4); c.lineTo(kx - 4, ky);
-            c.closePath(); c.fill();
-          }
-        }
+        drawKeys(layer, y);
         // row separator
         c.strokeStyle = '#0006'; c.lineWidth = 1;
         c.beginPath(); c.moveTo(0, y + rh + 0.5); c.lineTo(w, y + rh + 0.5); c.stroke();

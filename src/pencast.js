@@ -36,6 +36,7 @@
         keyframes: (l.transform && l.transform.keyframes)
           ? l.transform.keyframes.slice() : []
       },
+      pivot: l.pivot || null,
       shadeOf: l.shadeOf || null,
       _collapsed: !!l._collapsed,
       // exposure: needed so pen's Layer.celAt(frame) works

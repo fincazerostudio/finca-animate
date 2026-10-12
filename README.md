@@ -45,9 +45,15 @@ per-user copy (see `BUILD.md`).
 
 **Cut-out animation**
 - Per-layer transform keyframes (position / scale / rotation)
-- Transform tool with on-canvas handles
+- Transform tool (A) with on-canvas handles — drag to move, corners to
+  scale, the handle above the pivot to rotate; works on folders too
+- Pegs / parenting: a folder's transform carries everything inside it,
+  so nested folders build a rig (Layer → Add Peg wraps a layer in a
+  `-P` folder, Harmony-style)
+- Per-layer pivots — drag the crosshair to put a joint where it bends;
+  keyed poses stay put
 - Smooth interpolation between keyframes — drawing, onion skin and
-  export all stay transform-aware
+  export all stay transform-aware, including inside transformed folders
 
 **Timeline / Xsheet**
 - Multi-layer timeline with exposure cells

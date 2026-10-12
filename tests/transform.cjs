@@ -10,6 +10,9 @@ const path = require('path');
   page.on('console', m => { if (m.type() === 'error') errors.push('CONSOLE: ' + m.text()); });
   await page.goto(FILE, { waitUntil: 'load' });
   await page.waitForTimeout(800);
+  // the start-screen launcher overlays the canvas at boot; dismiss it
+  await page.evaluate(() => { const l = window.OT.app._launcher; if (l) l.close(); });
+  await page.waitForTimeout(200);
 
   const box = await page.evaluate(() => {
     const r = document.getElementById('canvas').getBoundingClientRect();
@@ -37,9 +40,10 @@ const path = require('path');
   });
   await page.waitForTimeout(60);
 
-  // at frame 12, drag the layer to move it
+  // at frame 12, drag the layer to move it (start off-centre: the exact
+  // centre is the default pivot, and grabbing that moves the pivot)
   await page.evaluate(() => window.OT.app.setFrame(12));
-  await page.mouse.move(P(0.5, 0.5).x, P(0.5, 0.5).y);
+  await page.mouse.move(P(0.46, 0.55).x, P(0.46, 0.55).y);
   await page.mouse.down();
   await page.mouse.move(P(0.72, 0.34).x, P(0.72, 0.34).y, { steps: 8 });
   await page.mouse.up();

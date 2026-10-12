@@ -26,7 +26,7 @@
   // vector cel and arms the full transform pill (Uniform / Freeform /
   // Distort / Warp). One canonical path, one UI everywhere.
   const TOOL_LIST = [
-    ['select', 'V'], ['lasso', 'Q'],
+    ['select', 'V'], ['lasso', 'Q'], ['transform', 'A'],
     ['sep'], ['brush', 'B'], ['pencil', 'N'], ['eraser', 'E'],
     ['sep'], ['fill', 'G'], ['eyedropper', 'I'],
     ['sep'], ['rect', 'R'], ['ellipse', 'O'], ['line', 'L'],
@@ -190,7 +190,10 @@
           { label: 'Move Layer Down', fn: () => a.moveLayer(a.activeLayer(), -1) },
           { label: 'Merge Down', fn: () => a.mergeDown(a.activeLayer()) },
           { sep: 1 },
+          { label: 'Add Peg (Parent Folder)', fn: () => a.addPeg(a.activeLayer()) },
+          { label: 'Transform Layer Tool', sc: 'A', fn: () => a.tools.select('transform') },
           { label: 'Set Transform Keyframe', fn: () => a.setLayerKeyHere() },
+          { label: 'Reset Pivot', fn: () => a.resetPivot(a.activeLayer()) },
           { label: 'Reset Layer Transform', fn: () => a.resetLayerTransform(a.activeLayer()) },
           { sep: 1 },
           { label: 'Auto-Shade Layer (Light & Shade)…', fn: () => this.shadeDialog() }
