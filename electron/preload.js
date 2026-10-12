@@ -58,6 +58,8 @@ contextBridge.exposeInMainWorld('OpenToonDesktop', {
     autosaveWrite: (data) => ipcRenderer.invoke('opentoon:autosave-write', data),
     autosaveRead: () => ipcRenderer.invoke('opentoon:autosave-read'),
     autosaveClear: () => ipcRenderer.invoke('opentoon:autosave-clear'),
+    autosaveHistory: () => ipcRenderer.invoke('opentoon:autosave-history'),
+    autosaveHistoryRead: (name) => ipcRenderer.invoke('opentoon:autosave-history-read', name),
     pendingFile: () => ipcRenderer.invoke('opentoon:pending-file'),
     statFile: (file) => ipcRenderer.invoke('opentoon:stat-file', file)
   }

@@ -9,24 +9,21 @@ costs a week.
 
 ---
 
-## Phase 0 — Protect the work *(next; small, do before anything else)*
+## Phase 0 — Protect the work ✅
 
-- [ ] **Safe saves.** Write to a temp file, then rename over the scene
-      (atomic), and keep the previous version as `scene.otoon.bak`. Today a
-      crash mid-save can leave a half-written project and no backup.
-- [ ] **Autosave history.** Keep the last few autosaves instead of one, and
-      offer them on the start screen after a crash.
-- [ ] **File-format versioning.** Bump the format version whenever saved data
-      changes (pivots, curves, art layers, swatch links all need it). Warn
-      before opening a file from a newer version, and refuse to overwrite it
-      silently; today an older build drops that data on save.
-- [ ] **Continuous testing.** Run `npm test` (plus `test:electron` and
-      `test:render`) on every push in CI, under a virtual display. Fix the
-      timing-flaky lasso check in `features2.cjs`. *(Upstream deleted the
-      Transform tool unnoticed because its test wasn't in the suite.)*
-- [ ] **Tighter file access.** The renderer can read/write any path through
-      IPC; restrict it to files the user picked in a dialog, recent files
-      and the app's own folders.
+- [x] **Safe saves.** Temp file + rename (atomic), previous version kept as
+      `scene.otoon.bak`.
+- [x] **Autosave history.** A snapshot at most every 5 minutes, newest 8
+      kept; File → Recover Autosave… opens one as an unsaved copy.
+- [x] **File-format versioning.** Format 2. Files from a newer version open
+      with a warning, and Save becomes Save As so the original is never
+      overwritten with data missing.
+- [x] **Continuous testing.** `.github/workflows/tests.yml` runs `npm test`,
+      the packaged-app, render and file-safety tests on every push. The
+      flaky lasso check now feeds realistic pen timing.
+- [x] **Tighter file access.** The renderer can only read `.otoon` files and
+      only write projects it opened, picked in a dialog, or new increments
+      next to them.
 
 ## Phase 1 — Scale and output *(before relying on it for long shots)*
 

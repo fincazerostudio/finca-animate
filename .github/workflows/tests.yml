@@ -1,0 +1,41 @@
+# Runs every test on each push and pull request. Read-only: it never
+# publishes builds or releases (that's release.yml, on version tags).
+name: tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Ubuntu 24.04's AppArmor blocks the user namespaces Electron's and
+      # Chrome's sandboxes need; allow them on this throwaway runner.
+      - name: Allow sandbox user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: App tests (headless Chrome)
+        run: xvfb-run -a npm test
+
+      - name: Build the Linux app
+        run: npx electron-builder --linux dir --publish never
+
+      - name: Packaged-app tests
+        run: |
+          xvfb-run -a npm run test:electron
+          xvfb-run -a npm run test:render -- dist/linux-unpacked/opentoon-studio
+          xvfb-run -a npm run test:files -- dist/linux-unpacked/opentoon-studio

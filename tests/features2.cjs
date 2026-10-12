@@ -17,12 +17,19 @@ const { launch, FILE } = require('./launch-browser.cjs');
   await page.waitForTimeout(900);
 
   // ---- lasso tool: draw a stroke, lasso it, drag it ----
-  const lasso = await page.evaluate(() => {
+  const lasso = await page.evaluate(async () => {
     const a = window.OT.app, pc = a.penCast;
     a.tools.select('brush');
+    // Real pen timing (~60 Hz). Firing every sample in the same millisecond
+    // made the time-based smoothing / hold-to-snap treat the stroke as a
+    // "held" shape on a loaded machine, so the test flaked under load.
+    const tick = () => new Promise(r => setTimeout(r, 16));
     pc._onInput({ type: 'down', nx: 0.44, ny: 0.42, pressure: 1, isPen: true });
-    for (let i = 1; i <= 10; i++)
+    for (let i = 1; i <= 10; i++) {
+      await tick();
       pc._onInput({ type: 'move', isPen: true, pts: [{ nx: 0.44 + i * 0.012, ny: 0.42 + Math.sin(i / 2) * 0.04, pressure: 1 }] });
+    }
+    await tick();
     pc._onInput({ type: 'up', nx: 0.56, ny: 0.44, pressure: 1, isPen: true });
     const cel = a.activeLayer().celAt(a.frame);
     const pts = cel.strokes[0].pts;

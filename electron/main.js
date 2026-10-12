@@ -491,7 +491,33 @@ function setupUpdateIpc() {
 }
 
 /* ---- IPC bridge for the renderer (version, updates, file IO, pen window) ---- */
+/* ---- crash-safe file writes ----
+   Write to a temp file in the same folder, flush it to disk, keep the old
+   file as <name>.bak, then rename the temp over the target. A crash or power
+   loss leaves either the old file or the new one, never a half-written one. */
+function writeFileAtomic(file, data, keepBak) {
+  const dir = path.dirname(file);
+  const tmp = path.join(dir, '.' + path.basename(file) + '.tmp-' + process.pid);
+  const fd = fs.openSync(tmp, 'w');
+  try { fs.writeFileSync(fd, data, 'utf8'); fs.fsyncSync(fd); }
+  finally { fs.closeSync(fd); }
+  try {
+    if (keepBak && fs.existsSync(file)) fs.copyFileSync(file, file + '.bak');
+    fs.renameSync(tmp, file);
+  } catch (e) { try { fs.unlinkSync(tmp); } catch (_) { /* ignore */ } throw e; }
+}
+
+/* ---- which files the renderer may touch ----
+   The renderer only ever reads and writes .otoon projects. Reads: any .otoon.
+   Writes: only .otoon paths that reached us this session through a native
+   dialog, the command line / file association, or a successful open. */
+const writableFiles = new Set();
+const isProject = f => typeof f === 'string' && /\.otoon$/i.test(f) && path.isAbsolute(f);
+function allowWrite(f) { if (isProject(f)) writableFiles.add(path.resolve(f)); }
+
 function setupIpc() {
+  // normal launches answer "no render job" (render mode registers its own first)
+  if (!renderJob) ipcMain.handle('opentoon:render-job', () => null);
   ipcMain.handle('opentoon:get-version', () => app.getVersion());
   ipcMain.handle('opentoon:update-policy', () => (isDev ? 'off' : UPDATE_POLICY));
   setupUpdateIpc();
@@ -503,7 +529,10 @@ function setupIpc() {
       defaultPath: defaultPath || 'untitled.otoon',
       filters: [{ name: 'OpenToon Project', extensions: ['otoon'] }]
     });
-    return r.canceled ? null : r.filePath;
+    if (r.canceled || !r.filePath) return null;
+    const f = /\.otoon$/i.test(r.filePath) ? r.filePath : r.filePath + '.otoon';
+    allowWrite(f);
+    return f;
   });
   ipcMain.handle('opentoon:open-dialog', async () => {
     const r = await dialog.showOpenDialog(win, {
@@ -514,19 +543,55 @@ function setupIpc() {
     return (r.canceled || !r.filePaths.length) ? null : r.filePaths[0];
   });
   ipcMain.handle('opentoon:read-file', (_e, file) => {
-    try { return { ok: true, data: fs.readFileSync(file, 'utf8') }; }
-    catch (e) { return { ok: false, error: e.message }; }
+    if (!isProject(file)) return { ok: false, error: 'only .otoon projects can be opened' };
+    try {
+      const data = fs.readFileSync(file, 'utf8');
+      allowWrite(file);                       // opened it: may save over it
+      return { ok: true, data };
+    } catch (e) { return { ok: false, error: e.message }; }
   });
+  // Also allowed: a NEW .otoon next to a project we may already write
+  // (File > Save Increment makes scene_002.otoon) -- never over an unknown file.
+  const newSibling = f => !fs.existsSync(f) &&
+    [...writableFiles].some(w => path.dirname(w) === path.dirname(path.resolve(f)));
   ipcMain.handle('opentoon:write-file', (_e, file, data) => {
-    try { fs.writeFileSync(file, data, 'utf8'); return { ok: true }; }
+    if (isProject(file) && !writableFiles.has(path.resolve(file)) && newSibling(file)) allowWrite(file);
+    if (!isProject(file) || !writableFiles.has(path.resolve(file)))
+      return { ok: false, error: 'not allowed to write ' + file + ' (save it through the Save dialog)' };
+    try { writeFileAtomic(file, data, true); return { ok: true }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   /* ---- crash-safe autosave to the userData folder (no quota limit) ---- */
   const autosaveFile = () => path.join(app.getPath('userData'), 'autosave.otoon');
+  // History: at most one snapshot per 5 minutes, the newest 8 kept, so a bad
+  // edit that got autosaved can still be rolled back.
+  const historyDir = () => path.join(app.getPath('userData'), 'autosave-history');
+  const HISTORY_EVERY = 5 * 60 * 1000, HISTORY_KEEP = 8;
+  const historyList = () => {
+    try {
+      return fs.readdirSync(historyDir()).filter(n => /^autosave-\d+\.otoon$/.test(n))
+        .map(n => ({ name: n, time: +n.match(/\d+/)[0], size: fs.statSync(path.join(historyDir(), n)).size }))
+        .sort((a, b) => b.time - a.time);
+    } catch (e) { return []; }
+  };
   ipcMain.handle('opentoon:autosave-write', (_e, data) => {
-    try { fs.writeFileSync(autosaveFile(), data, 'utf8'); return true; }
-    catch (e) { return false; }
+    try {
+      writeFileAtomic(autosaveFile(), data, false);
+      const list = historyList(), now = Date.now();
+      if (!list.length || now - list[0].time >= HISTORY_EVERY) {
+        fs.mkdirSync(historyDir(), { recursive: true });
+        fs.copyFileSync(autosaveFile(), path.join(historyDir(), 'autosave-' + now + '.otoon'));
+        for (const old of historyList().slice(HISTORY_KEEP))
+          try { fs.unlinkSync(path.join(historyDir(), old.name)); } catch (e) { /* ignore */ }
+      }
+      return true;
+    } catch (e) { return false; }
+  });
+  ipcMain.handle('opentoon:autosave-history', () => historyList());
+  ipcMain.handle('opentoon:autosave-history-read', (_e, name) => {
+    if (typeof name !== 'string' || !/^autosave-\d+\.otoon$/.test(name)) return null;
+    try { return fs.readFileSync(path.join(historyDir(), name), 'utf8'); } catch (e) { return null; }
   });
   ipcMain.handle('opentoon:autosave-read', () => {
     try {
@@ -542,6 +607,7 @@ function setupIpc() {
 
   /* ---- file stat for the start screen (last-opened timestamp on cards) ---- */
   ipcMain.handle('opentoon:stat-file', (_e, file) => {
+    if (!isProject(file)) return { ok: false, error: 'not a project file' };
     try {
       const s = fs.statSync(file);
       return { ok: true, mtimeMs: s.mtimeMs, size: s.size };

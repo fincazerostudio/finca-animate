@@ -102,10 +102,15 @@
     };
   }
 
+  // Bump whenever saved data gains something an older build would drop on
+  // save. 2: pivots, easing + curves, Line/Colour Art, swatch links,
+  // perspective guides. Files newer than this build open with a warning and
+  // are never overwritten silently (see App.saveProject).
+  const FORMAT_VERSION = 2;
   function serialize(app) {
     const p = app.project;
     return {
-      format: 'otoon', version: 1,
+      format: 'otoon', version: FORMAT_VERSION,
       name: p.name, width: p.width, height: p.height,
       fps: p.fps, frameCount: p.frameCount, bg: p.bg,
       palette: app.palette.serialize(),
@@ -185,7 +190,8 @@
       p.layers.push(layer);
     }
     if (!p.layers.length) p.layers.push(new OT.Layer('Drawing 1'));
-    return { project: p, palette: data.palette, workspace: data.workspace || null };
+    return { project: p, palette: data.palette, workspace: data.workspace || null,
+             version: data.version || 1, newer: (data.version || 1) > FORMAT_VERSION };
   }
 
   /* ---------------- frame rendering (camera-aware) ---------------- */
@@ -309,7 +315,7 @@
   const desktopFS = () => (window.OpenToonDesktop && window.OpenToonDesktop.fs) || null;
 
   const IO = {
-    serialize, deserialize, renderFrame, Export, loadImage,
+    serialize, deserialize, renderFrame, Export, loadImage, FORMAT_VERSION,
 
     // browser fallback: download the project as a file
     saveProject(app) {

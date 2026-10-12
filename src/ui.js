@@ -76,7 +76,8 @@
         { label: 'New Project…', sc: 'Ctrl+N', fn: () => this.newProjectDialog() },
         { label: 'Open Project…', sc: 'Ctrl+O', fn: () => a.openProject() },
         { label: 'Save Project', sc: 'Ctrl+S', fn: () => a.saveProject() },
-        { label: 'Save Project As…', sc: 'Ctrl+Shift+S', fn: () => a.saveProject(true) }
+        { label: 'Save Project As…', sc: 'Ctrl+Shift+S', fn: () => a.saveProject(true) },
+        { label: 'Recover Autosave…', fn: () => this.recoverAutosaveDialog() }
       ];
       // Recent files only make sense on desktop, where projects have real paths.
       if (window.OpenToonDesktop) {
@@ -1673,6 +1674,40 @@
         { label: 'Cancel' },
         { label: 'Rename', primary: true, fn: () => { sw.name = name.value.trim() || sw.name; a.dirty = true; a.emit('palettechange'); } }
       ]);
+    }
+
+    // Pick an autosave snapshot to open (newest first). Opens as an unsaved
+    // project, so nothing on disk is touched until you save it.
+    async recoverAutosaveDialog() {
+      const a = this.app, fsd = window.OpenToonDesktop && window.OpenToonDesktop.fs;
+      if (!fsd || !fsd.autosaveHistory) { this.status('Autosave history is available in the desktop app'); return; }
+      const [latest, hist] = await Promise.all([fsd.autosaveRead(), fsd.autosaveHistory()]);
+      const rows = [];
+      if (latest) rows.push({ label: 'Latest autosave', time: latest.time, load: async () => latest.data });
+      for (const h of hist || []) rows.push({ label: 'Snapshot', time: h.time, load: () => fsd.autosaveHistoryRead(h.name) });
+      if (!rows.length) { this.modal('Recover Autosave', el('div', { text: 'No autosaves yet.' })); return; }
+      const list = el('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '320px', overflow: 'auto' } });
+      let close = null;
+      rows.forEach(r => {
+        const b = el('button', { class: 'btn', style: { textAlign: 'left' },
+          text: r.label + ' — ' + new Date(r.time).toLocaleString() });
+        b.addEventListener('click', async () => {
+          try {
+            const txt = await r.load();
+            if (!txt) throw new Error('could not read it');
+            const d = await OT.IO.deserialize(JSON.parse(txt));
+            a.loadProjectData(d);
+            a.projectPath = null; a.dirty = true;
+            this.status('Recovered autosave from ' + new Date(r.time).toLocaleString() + ' — save it to keep it');
+            if (close) close.click();
+          } catch (e) { this.status('Could not open that autosave: ' + e.message); }
+        });
+        list.appendChild(b);
+      });
+      const m = this.modal('Recover Autosave', el('div', { style: { display: 'flex', flexDirection: 'column', gap: '9px' } }, [
+        el('div', { class: 'chk-row', text: 'Opens as an unsaved copy; your files on disk are not changed.' }), list
+      ]), [{ label: 'Close' }]);
+      close = document.querySelector('.modal-bg:last-child .modal-foot .btn');
     }
 
     lightTableDialog() {

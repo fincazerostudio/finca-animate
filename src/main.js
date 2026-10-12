@@ -1964,6 +1964,16 @@
       }
     }
     loadProjectData(data) {
+      // A file from a newer build may hold data this one doesn't understand;
+      // saving over it would drop that, so Save becomes Save As (see saveProject).
+      this._newerSource = !!data.newer;
+      if (data.newer && !this._renderMode) {
+        setTimeout(() => this.ui.modal('Newer project file', U.el('div', { style: { maxWidth: '360px' } }, [
+          'This scene was saved by a newer version (file format ' + data.version + '; this build reads up to ' +
+          OT.IO.FORMAT_VERSION + '). Anything this version doesn\'t understand isn\'t shown, and saving over the ' +
+          'file would remove it, so Save will ask for a new file name. Update the app to edit it fully.'
+        ])), 0);
+      }
       this.stopAudio();
       this.pauseVideos();
       this.audioBuffer = this.audioPeaks = null;
@@ -2069,6 +2079,7 @@
         OT.IO.writeProjectTo(this, path)
           .then(p => {
             this.projectPath = p;
+            this._newerSource = false;            // it's our own file now
             this._addRecent(p);
             this.ui.status('Saved ' + p);
             this.ui.showSaveToast(p);
@@ -2078,6 +2089,11 @@
             this.ui.showSaveToast(path, { error: true, detail: e.message });
           });
       };
+      // a newer-format file is never overwritten silently: save a copy instead
+      if (this._newerSource && !saveAs) {
+        saveAs = true;
+        this.ui.status('Saved by a newer version — choose a new file name so the original stays intact');
+      }
       // silent save-in-place once the project has a file; dialog otherwise
       if (this.projectPath && !saveAs) { write(this.projectPath); return; }
       const def = this.projectPath ||

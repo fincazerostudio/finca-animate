@@ -118,7 +118,8 @@ per-user copy (see `BUILD.md`).
 
 **Project I/O**
 - Save / load `.otoon` project files (JSON, self-contained)
-- Autosave to browser storage
+- Autosave to browser storage (desktop: crash-safe saves with a `.bak`
+  of the previous version, and File → Recover Autosave… with snapshot history)
 - Import reference images / image as layer
 
 **Export**
