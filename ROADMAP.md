@@ -31,9 +31,22 @@ costs a week.
       (≈8 MB at 1080p), even vector cels. Rasterise vector cels on demand and
       evict caches for frames far from the playhead, so hundreds of drawings
       fit in normal RAM.
-- [ ] **Project format v2.** One JSON file with base64 images is loaded and
-      saved whole. Move to a container (zip/folder) with one file per cel,
-      saving only what changed; keep reading v1 files.
+- [ ] **Project format v2: `.finca` (decided: single zip file).** Today one
+      JSON file with base64 images is loaded and saved whole; on a
+      300-drawing 1080p scene every save and 20 s autosave freezes the app
+      for 2–4 s (re-encoding every drawing) and opening takes ~3 s.
+      `.finca` becomes the native format: one zip file with a small scene
+      file plus one file per cel, re-encoding only the cels that changed
+      (no new dependency: Node's built-in zlib, ZIP64 for big scenes).
+      Vector cels are saved from their strokes, never from `cel.canvas`.
+      `.otoon` files keep opening forever; saving one always goes to a new
+      `.finca` (Save As), never overwriting the `.otoon`. Own file icon and
+      file association. Estimated ~9.5 days.
+      Design note: `docs/finca-format-design.md` on branch `feat/finca-format`.
+      Later, without changing the format: the "hybrid" option (fast hidden
+      recovery saves between full saves) for very long shots.
+      Undecided: an optional "Export → OpenToon (.otoon)" for sharing with
+      the original app (~0.5 day; it drops Finca-only data, with a warning).
 - [ ] **Offline, frame-accurate export.** Video is recorded in real time
       with MediaRecorder (slow, can drop frames under load, no alpha). Render
       frame by frame and encode with ffmpeg: H.264/H.265, ProRes 4444 and
