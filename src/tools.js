@@ -1668,11 +1668,73 @@
     }
   }
 
+  // Bounding box of what's drawn on a layer at a frame, in the layer's own
+  // (rest) space; for a folder, the union of everything inside it. Null
+  // when nothing is drawn. Bitmap cels are scanned at 1/4 scale and cached
+  // per edit (Cel._rev), so it's cheap enough to call every overlay frame.
+  let _rasterBoundsCache = new WeakMap();
+  function rasterBounds(cel) {
+    const hit = _rasterBoundsCache.get(cel);
+    if (hit && hit.rev === (cel._rev || 0)) return hit.b;
+    const s = 4, w = Math.max(1, Math.ceil(cel.w / s)), h = Math.max(1, Math.ceil(cel.h / s));
+    const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+    const x = cv.getContext('2d', { willReadFrequently: true });
+    x.drawImage(cel.canvas, 0, 0, w, h);
+    const d = x.getImageData(0, 0, w, h).data;
+    let minx = w, miny = h, maxx = -1, maxy = -1;
+    for (let yy = 0; yy < h; yy++) for (let xx = 0; xx < w; xx++) {
+      if (d[(yy * w + xx) * 4 + 3] > 8) {
+        if (xx < minx) minx = xx; if (xx > maxx) maxx = xx;
+        if (yy < miny) miny = yy; if (yy > maxy) maxy = yy;
+      }
+    }
+    const b = maxx < 0 ? null : { x0: minx * s, y0: miny * s, x1: (maxx + 1) * s, y1: (maxy + 1) * s };
+    _rasterBoundsCache.set(cel, { rev: cel._rev || 0, b });
+    return b;
+  }
+  function celBounds(cel) {
+    if (!cel) return null;
+    if (cel.kind === 'vector') {
+      if (!cel.strokes || !cel.strokes.length) return null;
+      let b = null;
+      for (const st of cel.strokes) {
+        const r = V().strokeBounds(st);
+        if (!isFinite(r.x)) continue;
+        b = unionBox(b, { x0: r.x, y0: r.y, x1: r.x + r.w, y1: r.y + r.h });
+      }
+      return b;
+    }
+    return rasterBounds(cel);
+  }
+  function unionBox(a, b) {
+    if (!a) return b; if (!b) return a;
+    return { x0: Math.min(a.x0, b.x0), y0: Math.min(a.y0, b.y0), x1: Math.max(a.x1, b.x1), y1: Math.max(a.y1, b.y1) };
+  }
+  function layerContentBounds(app, layer, frame) {
+    if (isDrawable(layer)) return layer.visible ? celBounds(layer.celAt(frame)) : null;
+    if (layer.type !== 'group' || !app.layerDescendants) return null;
+    // descendants' boxes, carried into the folder's own rest space
+    const p = app.project;
+    const toFolder = worldOf(layer, frame, app).inverse();
+    let b = null;
+    for (const d of app.layerDescendants(layer)) {
+      if (!isDrawable(d) || !d.visible) continue;
+      const cb = celBounds(d.celAt(frame));
+      if (!cb) continue;
+      const m = toFolder.multiply(worldOf(d, frame, app));
+      for (const [cx, cy] of [[cb.x0, cb.y0], [cb.x1, cb.y0], [cb.x1, cb.y1], [cb.x0, cb.y1]]) {
+        const q = OT.Peg.apply(m, cx, cy);
+        b = unionBox(b, { x0: q.x, y0: q.y, x1: q.x, y1: q.y });
+      }
+    }
+    return b;
+  }
+
   /* ============================== transform (cut-out pegs) ============================== */
   // Poses the active layer or folder by keying its transform on the
   // current frame. All maths runs in the PARENT folder's space, so the
   // tool behaves inside rotated / scaled folders (pegs) too.
-  //   drag body: move   corner: scale (Shift = uniform)
+  //   drag body: move   corner: scale from the opposite corner (Shift = uniform)
   //   handle above the pivot: rotate (Shift = 15° steps)   crosshair: move the pivot
   class TransformTool extends Tool {
     constructor() { super('transform'); }
@@ -1687,10 +1749,17 @@
       const W = OT.Peg.world(layer, f, p, anc);
       const tr = layer.transformAt(f), pv = OT.Peg.pivot(layer, p);
       const toW = (x, y) => OT.Peg.apply(W, x, y);
+      // Box hugs the drawing (or the folder's contents); the whole canvas
+      // only when there's nothing drawn yet.
+      const pad = 10;
+      const cb = layerContentBounds(app, layer, f);
+      const bx = cb ? { x0: cb.x0 - pad, y0: cb.y0 - pad, x1: cb.x1 + pad, y1: cb.y1 + pad }
+        : { x0: 0, y0: 0, x1: p.width, y1: p.height };
+      const local = [[bx.x0, bx.y0], [bx.x1, bx.y0], [bx.x1, bx.y1], [bx.x0, bx.y1]];
       return {
         p, PW, tr, pv,
-        corners: [toW(0, 0), toW(p.width, 0), toW(p.width, p.height), toW(0, p.height)],
-        local: [[0, 0], [p.width, 0], [p.width, p.height], [0, p.height]],
+        corners: local.map(([x, y]) => toW(x, y)),
+        local,
         pivotW: OT.Peg.apply(PW, pv.x + tr.x, pv.y + tr.y),
         up: (() => {          // the layer's "up" direction on screen
           const d = OT.Peg.applyDelta(W, 0, -1), n = Math.hypot(d.dx, d.dy) || 1;
@@ -1699,6 +1768,7 @@
       };
     }
     onActivate(app) {
+      _rasterBoundsCache = new WeakMap();
       app.ui.status('Transform: drag to move · corners scale · handle above the pivot rotates · drag the crosshair to move the pivot');
       app.emit('overlayrender');
     }
@@ -1706,6 +1776,7 @@
       const layer = this._target(app);
       if (!layer) { app.ui.status('Select a drawing layer or folder'); return; }
       if (layer.locked) { app.ui.status('Layer is locked'); return; }
+      _rasterBoundsCache = new WeakMap();
       const g = this._geo(app, layer);
       this._rotHandle(g, app);
       this.layer = layer;
@@ -1734,8 +1805,15 @@
       }
       for (let i = 0; i < 4; i++) {
         if (U.dist(pt.x, pt.y, g.corners[i].x, g.corners[i].y) < thr) {
+          // scale from the opposite corner, which stays pinned
           this.mode = 'scale';
-          this.v = { x: g.local[i][0] - g.pv.x, y: g.local[i][1] - g.pv.y };
+          const o = g.local[(i + 2) % 4];
+          this.A = { x: o[0], y: o[1] };                              // anchor, layer-local
+          this.CA = { x: g.local[i][0] - o[0], y: g.local[i][1] - o[1] };
+          this.pv = g.pv;
+          const rs0 = OT.Peg.rs(kf.rot, kf.sx, kf.sy);
+          const d0 = OT.Peg.applyDelta(rs0, this.A.x - g.pv.x, this.A.y - g.pv.y);
+          this.LA = { x: d0.dx + g.pv.x + kf.x, y: d0.dy + g.pv.y + kf.y };  // anchor, parent space
           return;
         }
       }
@@ -1760,18 +1838,23 @@
         if (pt.shift) deg = Math.round(deg / 15) * 15;
         k.rot = deg;
       } else if (this.mode === 'scale') {
-        // q - pivot = R·S·v  =>  S·v = R⁻¹(q - pivot)
+        // Dragged corner C follows q while the opposite corner A stays put:
+        //   q - L(A) = R·S·(C - A)  =>  S·(C - A) = R⁻¹(q - L(A))
         const r = -k0.rot * Math.PI / 180, c = Math.cos(r), s = Math.sin(r);
-        const dx = q.x - this.c0.x, dy = q.y - this.c0.y;
+        const dx = q.x - this.LA.x, dy = q.y - this.LA.y;
         const lx = dx * c - dy * s, ly = dx * s + dy * c;
-        let nsx = Math.abs(this.v.x) > 1e-6 ? lx / this.v.x : k0.sx;
-        let nsy = Math.abs(this.v.y) > 1e-6 ? ly / this.v.y : k0.sy;
+        let nsx = Math.abs(this.CA.x) > 1e-6 ? lx / this.CA.x : k0.sx;
+        let nsy = Math.abs(this.CA.y) > 1e-6 ? ly / this.CA.y : k0.sy;
         if (pt.shift) {
           const m = Math.max(Math.abs(nsx), Math.abs(nsy));
           nsx = Math.sign(nsx || 1) * m; nsy = Math.sign(nsy || 1) * m;
         }
         k.sx = Math.abs(nsx) < 0.02 ? 0.02 * Math.sign(nsx || 1) : nsx;
         k.sy = Math.abs(nsy) < 0.02 ? 0.02 * Math.sign(nsy || 1) : nsy;
+        // re-offset so A lands back where it was: t = L(A) - R·S·(A - P) - P
+        const d = OT.Peg.applyDelta(OT.Peg.rs(k.rot, k.sx, k.sy), this.A.x - this.pv.x, this.A.y - this.pv.y);
+        k.x = this.LA.x - d.dx - this.pv.x;
+        k.y = this.LA.y - d.dy - this.pv.y;
       } else if (this.mode === 'pivot') {
         this._movePivot(q);
       }

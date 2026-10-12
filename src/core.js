@@ -150,7 +150,7 @@ window.OT = window.OT || {};
       this.thumb = null;
       this.thumbDirty = true;
     }
-    dirty() { this.thumbDirty = true; }
+    dirty() { this.thumbDirty = true; this._rev = (this._rev || 0) + 1; }
     // Vector cels: re-render all strokes onto the raster cache canvas.
     // O(N) over cel.strokes — only call when the cel composition has
     // genuinely changed (strokes deleted, modified, reordered, restored
