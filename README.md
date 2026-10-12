@@ -3,6 +3,10 @@
 An open-source 2D animation studio for Windows and Linux, inspired by Toon Boom Harmony.
 Built as a zero-install desktop-style app — no build step, no server required.
 
+This is a fork of [OpenToon Studio](https://github.com/helliott20/opentoon) by
+helliott20 and contributors, with Linux support and additional features. It follows
+upstream releases and is distributed under the same MIT license (see `LICENSE`).
+
 > **Built with AI assistance.** OpenToon is developed with the help of AI coding
 > assistants (Claude), upstream and in this Linux port. The Linux support is tested
 > on Arch Linux with Hyprland. AI was used for code only; this port adds no
