@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200" fill="none" aria-label="Finca Animate">
+  <g transform="translate(-15 0)"><path d="M71 40 V160 M71 40 H131 M71 98 H119" stroke="#DD5038" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55"/></g>
+  <g transform="translate(15 0)"><path d="M71 40 V160 M71 40 H131 M71 98 H119" stroke="#54B06A" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55"/></g>
+  <path d="M71 40 V160 M71 40 H131 M71 98 H119" stroke="#F7F1E5" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

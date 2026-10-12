@@ -37,12 +37,12 @@
     return Math.floor(mo / 12) + ' yr ago';
   }
 
-  /* MARK SVG — same geometry as assets/brand/opentoon-mark.svg */
+  /* MARK SVG — same geometry as assets/brand/finca-animate-mark.svg */
   const MARK_SVG =
     '<svg viewBox="0 0 200 200" fill="none" aria-hidden="true">' +
-      '<circle cx="85"  cy="100" r="68" stroke="#DD5038" stroke-width="17" stroke-linecap="round" opacity="0.55"/>' +
-      '<circle cx="115" cy="100" r="68" stroke="#54B06A" stroke-width="17" stroke-linecap="round" opacity="0.55"/>' +
-      '<circle cx="100" cy="100" r="68" stroke="#F7F1E5" stroke-width="17" stroke-linecap="round"/>' +
+      '<g transform="translate(-15 0)"><path d="M71 40 V160 M71 40 H131 M71 98 H119" stroke="#DD5038" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55"/></g>' +
+      '<g transform="translate(15 0)"><path d="M71 40 V160 M71 40 H131 M71 98 H119" stroke="#54B06A" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55"/></g>' +
+      '<path d="M71 40 V160 M71 40 H131 M71 98 H119" stroke="#F7F1E5" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>' +
     '</svg>';
 
   class Launcher {
@@ -118,7 +118,7 @@
             el('div', { class: 'launcher-eyebrow brand-mono', text: 'Open · Source · Studio' }),
             el('div', {
               class: 'launcher-wordmark',
-              html: '<span class="open">Finca</span><span class="toon">Animate</span>'
+              html: '<span class="open">Finca </span><span class="toon">Animate</span>'
             }),
             el('div', { class: 'launcher-tag', text: 'Frame by frame, the slow way.' })
           ])
@@ -145,12 +145,19 @@
 
       const footer = el('footer', { class: 'launcher-foot' }, [
         el('div', { class: 'launcher-foot__left brand-mono' }, [
-          'MIT LICENSE · ',
+          'BETA · MIT LICENSE · ',
+          el('a', {
+            href: 'https://github.com/fincazerostudio/opentoon',
+            target: '_blank',
+            rel: 'noopener',
+            text: 'github.com/fincazerostudio/opentoon'
+          }),
+          ' · BASED ON ',
           el('a', {
             href: 'https://github.com/helliott20/opentoon',
             target: '_blank',
             rel: 'noopener',
-            text: 'github.com/helliott20/opentoon'
+            text: 'OPENTOON STUDIO'
           })
         ]),
         el('button', {

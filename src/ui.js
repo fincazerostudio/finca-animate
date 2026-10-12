@@ -234,11 +234,11 @@
         role: 'button', tabindex: '0',
         html:
           '<svg class="menu-title-mark" viewBox="0 0 200 200" fill="none" aria-hidden="true">' +
-          '<circle cx="85" cy="100" r="68" stroke="#DD5038" stroke-width="17" stroke-linecap="round" opacity="0.55"/>' +
-          '<circle cx="115" cy="100" r="68" stroke="#54B06A" stroke-width="17" stroke-linecap="round" opacity="0.55"/>' +
-          '<circle cx="100" cy="100" r="68" stroke="currentColor" stroke-width="17" stroke-linecap="round"/>' +
+          '<g transform="translate(-15 0)"><path d="M71 40 V160 M71 40 H131 M71 98 H119" stroke="#DD5038" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55"/></g>' +
+          '<g transform="translate(15 0)"><path d="M71 40 V160 M71 40 H131 M71 98 H119" stroke="#54B06A" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55"/></g>' +
+          '<path d="M71 40 V160 M71 40 H131 M71 98 H119" stroke="currentColor" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>' +
           '</svg>' +
-          '<span class="menu-title-text"><span class="open">Finca</span><span class="toon">Animate</span></span>'
+          '<span class="menu-title-text"><span class="open">Finca </span><span class="toon">Animate</span></span>'
       });
       brand.addEventListener('click', e => {
         e.stopPropagation();
@@ -2318,15 +2318,15 @@
       const desktop = window.OpenToonDesktop;
       const mark =
         '<svg class="about-mark" viewBox="0 0 200 200" fill="none" aria-hidden="true">' +
-        '<circle cx="85" cy="100" r="68" stroke="#DD5038" stroke-width="17" stroke-linecap="round" opacity="0.55"/>' +
-        '<circle cx="115" cy="100" r="68" stroke="#54B06A" stroke-width="17" stroke-linecap="round" opacity="0.55"/>' +
-        '<circle cx="100" cy="100" r="68" stroke="#F7F1E5" stroke-width="17" stroke-linecap="round"/>' +
+        '<g transform="translate(-15 0)"><path d="M71 40 V160 M71 40 H131 M71 98 H119" stroke="#DD5038" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55"/></g>' +
+        '<g transform="translate(15 0)"><path d="M71 40 V160 M71 40 H131 M71 98 H119" stroke="#54B06A" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55"/></g>' +
+        '<path d="M71 40 V160 M71 40 H131 M71 98 H119" stroke="#F7F1E5" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>' +
         '</svg>';
       const verLine = el('div', { class: 'about-version brand-mono', text: 'checking version…' });
       const status = el('div', { class: 'about-status' });
       const body = el('div', { class: 'about-body' }, [
         el('div', { html: mark }),
-        el('div', { class: 'brand-wordmark', html: '<span class="open">Finca</span><span class="toon">Animate</span>' }),
+        el('div', { class: 'brand-wordmark', html: '<span class="open">Finca </span><span class="toon">Animate</span>' }),
         verLine,
         el('div', { class: 'about-sep' }),
         el('div', { class: 'about-blurb',

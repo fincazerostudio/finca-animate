@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-label="Finca Animate">
+  <g transform="translate(-1.2 0)"><path d="M5.7 3.3 V12.7 M5.7 3.3 H10.5 M5.7 7.85 H9.5" stroke="#DD5038" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="0.85"/></g>
+  <g transform="translate(1.2 0)"><path d="M5.7 3.3 V12.7 M5.7 3.3 H10.5 M5.7 7.85 H9.5" stroke="#54B06A" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="0.85"/></g>
+  <path d="M5.7 3.3 V12.7 M5.7 3.3 H10.5 M5.7 7.85 H9.5" stroke="#14161A" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

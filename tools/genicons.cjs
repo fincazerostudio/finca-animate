@@ -1,4 +1,4 @@
-/* OpenToon Studio - generate app icons from the brand SVGs.
+/* Finca Animate - generate app icons from the brand SVGs.
  *
  *   node tools/genicons.cjs              # .ico files + Linux PNGs
  *   node tools/genicons.cjs --png-only   # Linux PNGs only
@@ -18,11 +18,11 @@ const SIZES = [16, 24, 32, 48, 64, 128, 256];
 const LINUX_SIZES = [16, 24, 32, 48, 64, 128, 256, 512];
 const PNG_ONLY = process.argv.includes('--png-only');
 
-/* the canonical 3-ring mark (200x200 space) */
+/* the canonical Finca Animate mark: onion-skin F (200x200 space) */
 const MARK =
-  '<circle cx="85" cy="100" r="68" stroke="#DD5038" stroke-width="17" stroke-linecap="round" opacity="0.55" fill="none"/>' +
-  '<circle cx="115" cy="100" r="68" stroke="#54B06A" stroke-width="17" stroke-linecap="round" opacity="0.55" fill="none"/>' +
-  '<circle cx="100" cy="100" r="68" stroke="#F7F1E5" stroke-width="17" stroke-linecap="round" fill="none"/>';
+  '<g transform="translate(-15 0)"><path d="M71 40 V160 M71 40 H131 M71 98 H119" stroke="#DD5038" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" fill="none"/></g>' +
+  '<g transform="translate(15 0)"><path d="M71 40 V160 M71 40 H131 M71 98 H119" stroke="#54B06A" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" fill="none"/></g>' +
+  '<path d="M71 40 V160 M71 40 H131 M71 98 H119" stroke="#F7F1E5" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" fill="none"/>';
 
 /* app icon: mark on a rounded-square --panel tile (Windows wants an opaque tile) */
 const APP_ICON =
@@ -97,7 +97,7 @@ async function rasterize(browser, svg, size) {
   console.log('wrote assets/icons/  (sizes ' + LINUX_SIZES.join('/') + ')');
   await browser.close();
   if (PNG_ONLY) return;
-  fs.writeFileSync(path.join(ROOT, 'assets', 'brand', 'opentoon-icon-master.svg'), APP_ICON + '\n');
-  fs.writeFileSync(path.join(ROOT, 'assets', 'brand', 'opentoon-file-icon.svg'), FILE_ICON + '\n');
+  fs.writeFileSync(path.join(ROOT, 'assets', 'brand', 'finca-animate-icon-master.svg'), APP_ICON + '\n');
+  fs.writeFileSync(path.join(ROOT, 'assets', 'brand', 'finca-animate-file-icon.svg'), FILE_ICON + '\n');
   console.log('wrote master SVGs to assets/brand/');
 })().catch(e => { console.error('genicons failed:', e); process.exitCode = 1; });
