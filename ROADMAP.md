@@ -41,12 +41,12 @@ costs a week.
       Vector cels are saved from their strokes, never from `cel.canvas`.
       `.otoon` files keep opening forever; saving one always goes to a new
       `.finca` (Save As), never overwriting the `.otoon`. Own file icon and
-      file association. Estimated ~9.5 days.
+      file association.
       Design note: `docs/finca-format-design.md` on branch `feat/finca-format`.
       Later, without changing the format: the "hybrid" option (fast hidden
       recovery saves between full saves) for very long shots.
       Undecided: an optional "Export → OpenToon (.otoon)" for sharing with
-      the original app (~0.5 day; it drops Finca-only data, with a warning).
+      the original app (it drops Finca-only data, with a warning).
 - [ ] **Offline, frame-accurate export.** Video is recorded in real time
       with MediaRecorder (slow, can drop frames under load, no alpha). Render
       frame by frame and encode with ffmpeg: H.264/H.265, ProRes 4444 and
