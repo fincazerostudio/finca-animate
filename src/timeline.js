@@ -362,7 +362,7 @@
               this._selBusy = false;
             }
           }
-          this._context(e);
+          this._context(e, y > this.headerH ? this.rowToLayer(Math.floor((y - this.headerH) / this.rowH)) : null, f);
           this.render();
           return;
         }
@@ -699,7 +699,7 @@
       this.render();
     }
 
-    _context(e) {
+    _context(e, layer, frame) {
       const app = this.app;
       // If there's an active multi-selection in the timeline, the
       // "Remove frame" entry deletes those cells in one undo.
@@ -721,7 +721,19 @@
         { sep: 1 },
         { label: 'Insert frame', fn: () => app.insertFrame() },
         { label: removeLabel, fn: removeFn }
-      ]);
+      ].concat(this._easeItems(layer, frame)));
+    }
+
+    // Right-clicking a transform keyframe offers its easing presets.
+    _easeItems(layer, frame) {
+      const key = layer && layer.transform &&
+        layer.transform.keyframes.find(k => k.frame === frame);
+      if (!key) return [];
+      const cur = key.ease || 'smooth';
+      return [{ sep: 1 }].concat(U.EASES.map(([id, name]) => ({
+        label: (id === cur ? '✓ ' : '    ') + 'Ease: ' + name,
+        fn: () => this.app.setLayerKeyEase(layer, frame, id)
+      })));
     }
     _selectedFrameCount() {
       let n = 0;
@@ -1478,6 +1490,7 @@
           for (const k of layer.transform.keyframes) {
             if (k.frame < 0 || k.frame >= p.frameCount) continue;
             const kx = k.frame * cw + cw / 2, ky = y + rh - 5;
+            if (k.ease === 'hold') { c.fillRect(kx - 3.5, ky - 3.5, 7, 7); continue; }
             c.beginPath();
             c.moveTo(kx, ky - 4); c.lineTo(kx + 4, ky);
             c.lineTo(kx, ky + 4); c.lineTo(kx - 4, ky);
