@@ -587,6 +587,7 @@
       L._collapsed = !!snap._collapsed;
       L.shadeOf = snap.shadeOf || null;
       L.transform = { keyframes: (snap.transform && snap.transform.keyframes) ? snap.transform.keyframes.slice() : [] };
+      L.pivot = snap.pivot || null;
       L.exposure = (snap.exposure || []).slice();
       L.cels = {};
       L.nextNum = 1;

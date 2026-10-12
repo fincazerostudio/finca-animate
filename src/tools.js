@@ -40,18 +40,22 @@
     return { layer, cel };
   }
 
-  // Map a project-space point into the active layer's cel space (inverse layer transform).
+  // World matrix of a layer at a frame: its own peg transform chained
+  // under every ancestor folder's (see OT.Peg). Identity when untransformed.
+  function worldOf(layer, frame, app) {
+    return OT.Peg.world(layer, frame, app.project,
+      app.layerAncestors ? app.layerAncestors(layer) : []);
+  }
+
+  // Map a project-space point into the active layer's cel space (inverse world transform).
   function toCel(app, pt) {
     const layer = app.activeLayer();
-    if (!layer || !layer.hasTransform()) return pt;
-    const tr = layer.transformAt(app.frame);
-    if (!tr.x && !tr.y && !tr.rot && tr.sx === 1 && tr.sy === 1) return pt;
-    const p = app.project, px = p.width / 2, py = p.height / 2;
-    const lx = pt.x - tr.x - px, ly = pt.y - tr.y - py;
-    const r = -tr.rot * Math.PI / 180, c = Math.cos(r), s = Math.sin(r);
-    const rx = (lx * c - ly * s) / tr.sx, ry = (lx * s + ly * c) / tr.sy;
+    if (!layer) return pt;
+    const m = worldOf(layer, app.frame, app);
+    if (m.isIdentity) return pt;
+    const q = OT.Peg.apply(m.inverse(), pt.x, pt.y);
     return {
-      x: rx + px, y: ry + py, pressure: pt.pressure,
+      x: q.x, y: q.y, pressure: pt.pressure,
       shift: pt.shift, alt: pt.alt, ctrl: pt.ctrl,
       sx: pt.sx, sy: pt.sy, button: pt.button
     };
@@ -185,42 +189,29 @@
   }
   OT.resampleByArcLength = resampleByArcLength;
 
-  // Invert a layer's transform: convert a project-space point into the
-  // layer's cel-local coords. Matches the forward chain in canvas.js
-  // (`_layerXform`): translate(tr.x+px, tr.y+py); rotate(rot); scale(sx,sy);
-  // translate(-px,-py).
+  // Invert a layer's world transform (own peg + ancestor folders):
+  // convert a project-space point into the layer's cel-local coords.
   function layerLocal(pt, layer, frame, app) {
     if (!layer || !layer.transformAt) return { x: pt.x, y: pt.y };
-    const tr = layer.transformAt(frame);
-    if (!tr.x && !tr.y && !tr.rot && tr.sx === 1 && tr.sy === 1)
-      return { x: pt.x, y: pt.y };
-    const p = app.project, px = p.width / 2, py = p.height / 2;
-    const u = pt.x - tr.x - px;
-    const v = pt.y - tr.y - py;
-    const r = tr.rot * Math.PI / 180, c = Math.cos(r), s = Math.sin(r);
-    const ux = u * c + v * s, uy = -u * s + v * c;
-    return { x: ux / (tr.sx || 1) + px, y: uy / (tr.sy || 1) + py };
+    const m = worldOf(layer, frame, app);
+    if (m.isIdentity) return { x: pt.x, y: pt.y };
+    return OT.Peg.apply(m.inverse(), pt.x, pt.y);
   }
-  // Inverse layer transform applied to a delta vector (no translation).
-  function layerLocalDelta(dx, dy, layer, frame) {
+  // Inverse world transform applied to a delta vector (no translation).
+  function layerLocalDelta(dx, dy, layer, frame, app) {
     if (!layer || !layer.transformAt) return { dx, dy };
-    const tr = layer.transformAt(frame);
-    if (!tr.rot && tr.sx === 1 && tr.sy === 1) return { dx, dy };
-    const r = tr.rot * Math.PI / 180, c = Math.cos(r), s = Math.sin(r);
-    return { dx: (dx * c + dy * s) / (tr.sx || 1), dy: (-dx * s + dy * c) / (tr.sy || 1) };
+    const m = worldOf(layer, frame, app || OT.app);
+    if (m.isIdentity) return { dx, dy };
+    return OT.Peg.applyDelta(m.inverse(), dx, dy);
   }
-  // Apply a layer's forward transform to a canvas 2D ctx, so overlay
-  // shapes drawn in cel-local coords visually align with the rendered
-  // artwork on a translated/rotated/scaled layer.
+  // Apply a layer's forward world transform to a canvas 2D ctx, so
+  // overlay shapes drawn in cel-local coords visually align with the
+  // rendered artwork on a transformed layer or inside a transformed folder.
   function applyLayerXform(ctx, layer, frame, app) {
     if (!layer || !layer.transformAt) return false;
-    const tr = layer.transformAt(frame);
-    if (!tr.x && !tr.y && !tr.rot && tr.sx === 1 && tr.sy === 1) return false;
-    const p = app.project, px = p.width / 2, py = p.height / 2;
-    ctx.translate(tr.x + px, tr.y + py);
-    ctx.rotate(tr.rot * Math.PI / 180);
-    ctx.scale(tr.sx, tr.sy);
-    ctx.translate(-px, -py);
+    const m = worldOf(layer, frame, app);
+    if (m.isIdentity) return false;
+    ctx.transform(m.a, m.b, m.c, m.d, m.e, m.f);
     return true;
   }
 
@@ -1674,6 +1665,171 @@
     constructor() { super('zoom'); }
     pointerDown(pt, e, app) {
       app.stage.zoomAt(pt.sx, pt.sy, pt.alt ? 1 / 1.4 : 1.4);
+    }
+  }
+
+  /* ============================== transform (cut-out pegs) ============================== */
+  // Poses the active layer or folder by keying its transform on the
+  // current frame. All maths runs in the PARENT folder's space, so the
+  // tool behaves inside rotated / scaled folders (pegs) too.
+  //   drag body: move   corner: scale (Shift = uniform)
+  //   handle above the pivot: rotate (Shift = 15° steps)   crosshair: move the pivot
+  class TransformTool extends Tool {
+    constructor() { super('transform'); }
+    _target(app) {
+      const l = app.activeLayer();
+      return l && (isDrawable(l) || l.type === 'group') ? l : null;
+    }
+    _geo(app, layer) {
+      const p = app.project, f = app.frame;
+      const anc = app.layerAncestors ? app.layerAncestors(layer) : [];
+      const PW = OT.Peg.parentWorld(layer, f, p, anc);
+      const W = OT.Peg.world(layer, f, p, anc);
+      const tr = layer.transformAt(f), pv = OT.Peg.pivot(layer, p);
+      const toW = (x, y) => OT.Peg.apply(W, x, y);
+      return {
+        p, PW, tr, pv,
+        corners: [toW(0, 0), toW(p.width, 0), toW(p.width, p.height), toW(0, p.height)],
+        local: [[0, 0], [p.width, 0], [p.width, p.height], [0, p.height]],
+        pivotW: OT.Peg.apply(PW, pv.x + tr.x, pv.y + tr.y),
+        up: (() => {          // the layer's "up" direction on screen
+          const d = OT.Peg.applyDelta(W, 0, -1), n = Math.hypot(d.dx, d.dy) || 1;
+          return { x: d.dx / n, y: d.dy / n };
+        })()
+      };
+    }
+    onActivate(app) {
+      app.ui.status('Transform: drag to move · corners scale · handle above the pivot rotates · drag the crosshair to move the pivot');
+      app.emit('overlayrender');
+    }
+    pointerDown(pt, e, app) {
+      const layer = this._target(app);
+      if (!layer) { app.ui.status('Select a drawing layer or folder'); return; }
+      if (layer.locked) { app.ui.status('Layer is locked'); return; }
+      const g = this._geo(app, layer);
+      this._rotHandle(g, app);
+      this.layer = layer;
+      this.before = app._structSnapshot();
+      this.invPW = g.PW.inverse();
+      this.q0 = OT.Peg.apply(this.invPW, pt.x, pt.y);
+      const thr = 11 / app.stage.view.zoom;
+      if (U.dist(pt.x, pt.y, g.pivotW.x, g.pivotW.y) < thr) {
+        this.mode = 'pivot';
+        this.pv0 = g.pv; this.tr0 = g.tr;
+        this.keys0 = layer.transform.keyframes.map(k => Object.assign({}, k));
+        return;
+      }
+      let kf = layer.transform.keyframes.find(k => k.frame === app.frame);
+      if (!kf) {
+        kf = Object.assign({ frame: app.frame }, layer.transformAt(app.frame));
+        layer.transform.keyframes.push(kf);
+      }
+      this.kf = kf;
+      this.k0 = Object.assign({}, kf);
+      this.c0 = { x: g.pv.x + kf.x, y: g.pv.y + kf.y };   // pivot, parent space
+      if (U.dist(pt.x, pt.y, g.rotH.x, g.rotH.y) < thr) {
+        this.mode = 'rotate';
+        this.a0 = Math.atan2(this.q0.y - this.c0.y, this.q0.x - this.c0.x);
+        return;
+      }
+      for (let i = 0; i < 4; i++) {
+        if (U.dist(pt.x, pt.y, g.corners[i].x, g.corners[i].y) < thr) {
+          this.mode = 'scale';
+          this.v = { x: g.local[i][0] - g.pv.x, y: g.local[i][1] - g.pv.y };
+          return;
+        }
+      }
+      this.mode = 'move';
+    }
+    // Rotate handle: on a stalk above the pivot, a fixed screen length
+    // away, so it's always next to the part being rigged and on-screen.
+    _rotHandle(g, app) {
+      const len = 56 / app.stage.view.zoom;
+      g.rotH = { x: g.pivotW.x + g.up.x * len, y: g.pivotW.y + g.up.y * len };
+      return g;
+    }
+    pointerMove(pt, e, app) {
+      if (!this.mode) return;
+      const q = OT.Peg.apply(this.invPW, pt.x, pt.y), k = this.kf, k0 = this.k0;
+      if (this.mode === 'move') {
+        k.x = k0.x + (q.x - this.q0.x);
+        k.y = k0.y + (q.y - this.q0.y);
+      } else if (this.mode === 'rotate') {
+        const a = Math.atan2(q.y - this.c0.y, q.x - this.c0.x);
+        let deg = k0.rot + (a - this.a0) * 180 / Math.PI;
+        if (pt.shift) deg = Math.round(deg / 15) * 15;
+        k.rot = deg;
+      } else if (this.mode === 'scale') {
+        // q - pivot = R·S·v  =>  S·v = R⁻¹(q - pivot)
+        const r = -k0.rot * Math.PI / 180, c = Math.cos(r), s = Math.sin(r);
+        const dx = q.x - this.c0.x, dy = q.y - this.c0.y;
+        const lx = dx * c - dy * s, ly = dx * s + dy * c;
+        let nsx = Math.abs(this.v.x) > 1e-6 ? lx / this.v.x : k0.sx;
+        let nsy = Math.abs(this.v.y) > 1e-6 ? ly / this.v.y : k0.sy;
+        if (pt.shift) {
+          const m = Math.max(Math.abs(nsx), Math.abs(nsy));
+          nsx = Math.sign(nsx || 1) * m; nsy = Math.sign(nsy || 1) * m;
+        }
+        k.sx = Math.abs(nsx) < 0.02 ? 0.02 * Math.sign(nsx || 1) : nsx;
+        k.sy = Math.abs(nsy) < 0.02 ? 0.02 * Math.sign(nsy || 1) : nsy;
+      } else if (this.mode === 'pivot') {
+        this._movePivot(q);
+      }
+      app.emit('render'); app.emit('overlayrender');
+    }
+    // Move the pivot so the crosshair lands on q (parent space) while every
+    // keyed pose stays exactly where it was: each key's offset absorbs the
+    // shift, t' = t + (I - R·S)(P0 - P'). Only the in-betweens change.
+    _movePivot(q) {
+      const P0 = this.pv0, t = this.tr0;
+      const RS = k => OT.Peg.rs(k.rot, k.sx, k.sy);
+      const M = RS(t), Mi = M.inverse();
+      // Solve P' + t + (I - M)(P0 - P') = q  =>  M·P' = q - t - (I - M)·P0
+      const mP0 = OT.Peg.applyDelta(M, P0.x, P0.y);
+      const rx = q.x - t.x - (P0.x - mP0.dx), ry = q.y - t.y - (P0.y - mP0.dy);
+      const sol = isFinite(Mi.a) ? OT.Peg.applyDelta(Mi, rx, ry) : { dx: q.x - t.x, dy: q.y - t.y };
+      const P = { x: sol.dx, y: sol.dy };
+      const d = { x: P0.x - P.x, y: P0.y - P.y };
+      this.layer.transform.keyframes = this.keys0.map(k0 => {
+        const m = OT.Peg.applyDelta(RS(k0), d.x, d.y);
+        return Object.assign({}, k0, { x: (k0.x || 0) + d.x - m.dx, y: (k0.y || 0) + d.y - m.dy });
+      });
+      this.layer.pivot = P;
+    }
+    pointerUp(pt, e, app) {
+      if (!this.mode) return;
+      app._commitStruct(this.mode === 'pivot' ? 'Move pivot' : 'Layer transform keyframe', this.before);
+      this.mode = null; this.kf = null; this.layer = null;
+    }
+    drawOverlay(ctx, app) {
+      const layer = this._target(app);
+      if (!layer) return;
+      const g = this._rotHandle(this._geo(app, layer), app), zoom = app.stage.view.zoom;
+      ctx.save();
+      ctx.lineWidth = 1.6 / zoom;
+      ctx.strokeStyle = '#e8a23a';
+      if (layer.type === 'group') ctx.setLineDash([6 / zoom, 4 / zoom]);
+      ctx.beginPath();
+      ctx.moveTo(g.corners[0].x, g.corners[0].y);
+      for (let i = 1; i < 4; i++) ctx.lineTo(g.corners[i].x, g.corners[i].y);
+      ctx.closePath(); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(g.pivotW.x, g.pivotW.y); ctx.lineTo(g.rotH.x, g.rotH.y); ctx.stroke();
+      const hs = 4.5 / zoom;
+      ctx.fillStyle = '#fff';
+      for (const cn of g.corners) {
+        ctx.beginPath(); ctx.rect(cn.x - hs, cn.y - hs, hs * 2, hs * 2); ctx.fill(); ctx.stroke();
+      }
+      ctx.beginPath(); ctx.arc(g.rotH.x, g.rotH.y, hs, 0, 7); ctx.fill(); ctx.stroke();
+      // pivot: ringed crosshair
+      const c = g.pivotW, cr = 9 / zoom;
+      ctx.strokeStyle = '#ff5a5a';
+      ctx.beginPath(); ctx.arc(c.x, c.y, cr * 0.55, 0, 7); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(c.x - cr, c.y); ctx.lineTo(c.x + cr, c.y);
+      ctx.moveTo(c.x, c.y - cr); ctx.lineTo(c.x, c.y + cr);
+      ctx.stroke();
+      ctx.restore();
     }
   }
 
@@ -3584,16 +3740,12 @@
       this._toolbarEl.style.left = x + 'px';
       this._toolbarEl.style.top = y + 'px';
     }
-    // Forward layer transform applied to a point: cel-local -> project-space.
+    // Forward world transform applied to a point: cel-local -> project-space.
     _celToProjectFwd(pt, layer, frame, app) {
       if (!layer || !layer.transformAt) return { x: pt.x, y: pt.y };
-      const tr = layer.transformAt(frame);
-      if (!tr.x && !tr.y && !tr.rot && tr.sx === 1 && tr.sy === 1)
-        return { x: pt.x, y: pt.y };
-      const p = app.project, px = p.width / 2, py = p.height / 2;
-      const lx = (pt.x - px) * tr.sx, ly = (pt.y - py) * tr.sy;
-      const rad = tr.rot * Math.PI / 180, c = Math.cos(rad), s = Math.sin(rad);
-      return { x: lx * c - ly * s + px + tr.x, y: lx * s + ly * c + py + tr.y };
+      const m = worldOf(layer, frame, app);
+      if (m.isIdentity) return { x: pt.x, y: pt.y };
+      return OT.Peg.apply(m, pt.x, pt.y);
     }
     // ---- pen-window parity contract ----
     // Return a small, serialisable snapshot of overlay state the pen window
@@ -3874,6 +4026,7 @@
       const list = [
         new SelectTool(),
         new LassoTool(),
+        new TransformTool(),
         new PaintTool('brush'),
         new PencilTool(),
         new PaintTool('eraser'),

@@ -39,6 +39,7 @@ Tracking parity with Toon Boom Harmony Advanced.
 - [x] Tool & view settings persist between sessions
 - [x] Keyframe easing presets (linear / smooth / ease in / ease out / hold)
 - [x] Light table (washed-out context layers, adjustable strength, isolate when off)
+- [x] Pegs: folder transform inheritance, per-layer pivots, Transform tool (A), Add Peg
 
 ## Next
 - [ ] Function-curve editor (Bezier easing per channel)

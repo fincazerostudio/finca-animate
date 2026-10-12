@@ -125,6 +125,7 @@
           visible: l.visible, locked: l.locked, opacity: l.opacity, color: l.color,
           exposure: l.exposure.slice(), nextNum: l.nextNum,
           transform: JSON.parse(JSON.stringify(l.transform || { keyframes: [] })),
+          pivot: l.pivot || null,
           video: l.video || null,
           parentId: l.parentId || null,
           collapsed: !!l._collapsed,
@@ -151,6 +152,7 @@
       layer.exposure = (ld.exposure || []).slice();
       layer.nextNum = ld.nextNum || 1;
       layer.transform = ld.transform && ld.transform.keyframes ? ld.transform : { keyframes: [] };
+      layer.pivot = ld.pivot && isFinite(ld.pivot.x) && isFinite(ld.pivot.y) ? { x: +ld.pivot.x, y: +ld.pivot.y } : null;
       if (ld.video) layer.video = ld.video;
       layer.parentId = ld.parentId || null;
       layer._collapsed = !!ld.collapsed;

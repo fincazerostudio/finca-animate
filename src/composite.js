@@ -248,21 +248,8 @@
   // ancestor first so a parent group's translate/rotate/scale becomes the
   // frame in which every descendant draws (Toon Boom peg model).
   function applyWorldXform(ctx, layer, frame, project, layerAncestors) {
-    const px = project.width / 2, py = project.height / 2;
-    const chain = [];
-    const ancestors = layerAncestors(layer);
-    for (let i = ancestors.length - 1; i >= 0; i--) chain.push(ancestors[i]);
-    chain.push(layer);
-    for (const l of chain) {
-      const tr = l.transformAt ? l.transformAt(frame) : null;
-      if (!tr) continue;
-      if (tr.x || tr.y || tr.rot || tr.sx !== 1 || tr.sy !== 1) {
-        ctx.translate(tr.x + px, tr.y + py);
-        ctx.rotate(tr.rot * Math.PI / 180);
-        ctx.scale(tr.sx, tr.sy);
-        ctx.translate(-px, -py);
-      }
-    }
+    const m = OT.Peg.world(layer, frame, project, layerAncestors(layer));
+    if (!m.isIdentity) ctx.transform(m.a, m.b, m.c, m.d, m.e, m.f);
   }
 
   OT.compositeStage = compositeStage;

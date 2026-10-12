@@ -99,6 +99,7 @@
     { id: 'tool-rect', label: 'Rectangle tool', cat: 'Tools', def: 'r', noRepeat: 1, run: a => a.tools.select('rect') },
     { id: 'tool-ellipse', label: 'Ellipse tool', cat: 'Tools', def: 'o', noRepeat: 1, run: a => a.tools.select('ellipse') },
     { id: 'tool-line', label: 'Line tool', cat: 'Tools', def: '/', noRepeat: 1, run: a => a.tools.select('line') },
+    { id: 'tool-peg', label: 'Transform layer (cut-out)', cat: 'Tools', def: 'a', noRepeat: 1, run: a => a.tools.select('transform') },
     { id: 'tool-hand', label: 'Pan tool', cat: 'Tools', def: 'h', noRepeat: 1, run: a => a.tools.select('hand') },
     { id: 'tool-zoom', label: 'Zoom tool', cat: 'Tools', def: 'z', noRepeat: 1, run: a => a.tools.select('zoom') },
     { id: 'play', label: 'Play / Stop', cat: 'Animation', def: 'enter', prevent: 1, noRepeat: 1, run: a => a.playback.toggle() },
@@ -677,6 +678,7 @@
           opacity: l.opacity, color: l.color,
           exposure: l.exposure.slice(), nextNum: l.nextNum,
           transform: JSON.parse(JSON.stringify(l.transform)),
+          pivot: l.pivot ? { x: l.pivot.x, y: l.pivot.y } : null,
           cels: Object.assign({}, l.cels)
         }))
       };
@@ -692,6 +694,7 @@
         l.opacity = pl.opacity; l.color = pl.color;
         l.exposure = pl.exposure.slice(); l.nextNum = pl.nextNum;
         l.transform = JSON.parse(JSON.stringify(pl.transform || { keyframes: [] }));
+        l.pivot = pl.pivot ? { x: pl.pivot.x, y: pl.pivot.y } : null;
         l.cels = Object.assign({}, pl.cels);
       }
       this._activeLayer = p.layers.find(l => l.id === s.activeId) || p.layers[p.layers.length - 1];
@@ -1143,9 +1146,14 @@
         // Pluck the selected layers from the array (keeping their
         // relative order) and re-insert them as a contiguous block at the
         // highest original index, with the group sitting just above them.
-        const indices = sameParent.map(l => L.indexOf(l)).sort((a, b) => a - b);
+        // A selected folder brings its whole subtree, so its children
+        // stay directly below it (they keep their own parentId).
+        const members = new Set(sameParent);
+        for (const l of sameParent) if (l.type === 'group')
+          for (const d of this.layerDescendants(l)) members.add(d);
+        const indices = [...members].map(l => L.indexOf(l)).sort((a, b) => a - b);
         const topIdx = indices[indices.length - 1];
-        const block = sameParent.slice().sort((a, b) => L.indexOf(a) - L.indexOf(b));
+        const block = [...members].sort((a, b) => L.indexOf(a) - L.indexOf(b));
         for (let i = L.length - 1; i >= 0; i--) if (block.includes(L[i])) L.splice(i, 1);
         // After splicing, work out the new insertion index. We aim to
         // insert the block at the position previously occupied by the
@@ -1155,7 +1163,7 @@
         L.splice(insertAt, 0, ...block);
         // Folder goes immediately above the block.
         L.splice(insertAt + block.length, 0, group);
-        for (const l of block) l.parentId = group.id;
+        for (const l of sameParent) l.parentId = group.id;
         this.selectedLayers.clear();
         this.selectedLayers.add(group);
         // Keep the previous active layer if it's still in the project;
@@ -1235,6 +1243,7 @@
         c.opacity = layer.opacity; c.color = layer.color;
         c.exposure = layer.exposure.slice(); c.nextNum = layer.nextNum;
         c.transform = JSON.parse(JSON.stringify(layer.transform || { keyframes: [] }));
+        c.pivot = layer.pivot ? { x: layer.pivot.x, y: layer.pivot.y } : null;
         if (layer.type === 'video' && layer.video) {
           c.video = {
             name: layer.video.name, src: layer.video.src, duration: layer.video.duration
@@ -1298,7 +1307,10 @@
 
     /* ---------------- layer transform ---------------- */
     setLayerKeyHere() {
-      const l = this._dl(); if (!l) return;
+      const l = this.activeLayer();
+      if (!l || (l.type !== 'drawing' && l.type !== 'vector' && l.type !== 'group')) {
+        this.ui.status('Select a drawing layer or folder'); return;
+      }
       const c = l.transformAt(this.frame);
       this.doStruct('Set transform keyframe', () => {
         const prev = l.transform.keyframes.find(k => k.frame === this.frame);
@@ -1313,6 +1325,43 @@
       const k = layer && layer.transform.keyframes.find(k => k.frame === frame);
       if (!k) { this.ui.status('No transform keyframe on this frame'); return; }
       this.doStruct('Keyframe easing', () => { k.ease = ease; });
+    }
+    // Wrap a layer in a new folder that acts as its peg (Harmony's "-P"
+    // naming). The folder takes the layer's slot; its transform moves,
+    // rotates and scales the layer plus anything later dropped inside.
+    addPeg(layer) {
+      layer = layer || this.activeLayer();
+      if (!layer) return;
+      const L = this.project.layers;
+      this.doStruct('Add peg', () => {
+        const peg = new OT.Layer(layer.name + '-P', 'group');
+        peg.parentId = layer.parentId || null;
+        peg.color = '#c8a04a';
+        // a folder's members sit directly below it in the stack, so the
+        // peg goes just above the layer (and a folder's whole block)
+        L.splice(L.indexOf(layer) + 1, 0, peg);
+        layer.parentId = peg.id;
+        this.selectedLayers.clear();
+        this.selectedLayers.add(peg);
+        this._activeLayer = peg;
+      });
+      this.emit('layerschange'); this.emit('layerselect'); this.emit('render');
+      this.ui.status('Added peg "' + layer.name + '-P" — animate it with the Transform tool (A)');
+    }
+    // Back to the default (canvas-centre) pivot, keeping keyed poses put.
+    resetPivot(layer) {
+      layer = layer || this.activeLayer();
+      if (!layer || !layer.pivot) { this.ui.status('Pivot is already centred'); return; }
+      const p = this.project, P0 = layer.pivot;
+      const d = { x: P0.x - p.width / 2, y: P0.y - p.height / 2 };
+      this.doStruct('Reset pivot', () => {
+        for (const k of layer.transform.keyframes) {
+          const m = OT.Peg.rs(k.rot, k.sx, k.sy);
+          const md = OT.Peg.applyDelta(m, d.x, d.y);
+          k.x = (k.x || 0) + d.x - md.dx; k.y = (k.y || 0) + d.y - md.dy;
+        }
+        layer.pivot = null;
+      });
     }
     resetLayerTransform(layer) {
       if (!layer) return;
@@ -1958,12 +2007,14 @@
       const capture = () => p.layers.map(l => ({
         layer: l,
         cels: Object.assign({}, l.cels),
-        transform: JSON.parse(JSON.stringify(l.transform || { keyframes: [] }))
+        transform: JSON.parse(JSON.stringify(l.transform || { keyframes: [] })),
+        pivot: l.pivot ? { x: l.pivot.x, y: l.pivot.y } : null
       }));
       const restore = (saved, w, h, cam) => {
         for (const s of saved) {
           s.layer.cels = Object.assign({}, s.cels);
           s.layer.transform = JSON.parse(JSON.stringify(s.transform));
+          s.layer.pivot = s.pivot ? { x: s.pivot.x, y: s.pivot.y } : null;
         }
         p.width = w; p.height = h;
         p.camera = JSON.parse(JSON.stringify(cam));
@@ -1999,6 +2050,10 @@
             k.x = (k.x || 0) * sx; k.y = (k.y || 0) * sy;
           }
         }
+        // A custom pivot follows the artwork (a null pivot stays centred).
+        if (l.pivot) l.pivot = mode === 'scale'
+          ? { x: l.pivot.x * sx, y: l.pivot.y * sy }
+          : { x: l.pivot.x + dx, y: l.pivot.y + dy };
       }
       if (mode === 'scale') {
         for (const k of p.camera.keyframes) {

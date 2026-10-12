@@ -261,6 +261,9 @@ window.OT = window.OT || {};
       this.exposure = [];        // frameIndex -> cel num (0 = empty)
       this.nextNum = 1;
       this.transform = { keyframes: [] };  // {frame,x,y,sx,sy,rot,ease?}
+      // Rotate / scale pivot in the layer's own (rest) space; null = the
+      // canvas centre, which is how transforms behaved before pivots.
+      this.pivot = null;
       // Folder support: parentId points to the containing 'group' layer (or
       // null = top level). Group layers themselves carry _collapsed for the
       // chevron toggle. Groups have no cels/exposure — they're purely
@@ -413,6 +416,52 @@ window.OT = window.OT || {};
     }
   }
   OT.Project = Project;
+
+  /* ============================== Pegs ============================== */
+  // Layer (and folder) transforms as affine matrices. A layer's local
+  // matrix rotates/scales about its pivot then offsets by (x, y); its
+  // world matrix chains every ancestor folder's local matrix, so a
+  // folder acts as a peg for everything inside it. Used for rendering
+  // AND for mapping pointer input back into cel space, so the two can't
+  // drift apart.
+  const Peg = OT.Peg = {
+    pivot(layer, project) {
+      return layer && layer.pivot
+        ? { x: layer.pivot.x, y: layer.pivot.y }
+        : { x: project.width / 2, y: project.height / 2 };
+    },
+    // Rotate·scale linear part. Built from Math.cos/sin rather than
+    // DOMMatrix.rotate(), whose lower-precision trig drifts ~1e-4 px.
+    rs(rot, sx, sy) {
+      const r = (rot || 0) * Math.PI / 180, c = Math.cos(r), s = Math.sin(r);
+      sx = sx == null ? 1 : sx; sy = sy == null ? 1 : sy;
+      return new DOMMatrix([c * sx, s * sx, -s * sy, c * sy, 0, 0]);
+    },
+    local(layer, frame, project) {
+      const m = new DOMMatrix();
+      if (!layer || !layer.transformAt) return m;
+      const tr = layer.transformAt(frame);
+      if (!tr.x && !tr.y && !tr.rot && tr.sx === 1 && tr.sy === 1) return m;
+      const pv = Peg.pivot(layer, project);
+      return m.translate(tr.x + pv.x, tr.y + pv.y)
+        .multiply(Peg.rs(tr.rot, tr.sx, tr.sy)).translate(-pv.x, -pv.y);
+    },
+    // ancestors: nearest-first list, as app.layerAncestors() returns.
+    world(layer, frame, project, ancestors) {
+      let m = new DOMMatrix();
+      for (let i = ancestors.length - 1; i >= 0; i--)
+        m = m.multiply(Peg.local(ancestors[i], frame, project));
+      return m.multiply(Peg.local(layer, frame, project));
+    },
+    parentWorld(layer, frame, project, ancestors) {
+      let m = new DOMMatrix();
+      for (let i = ancestors.length - 1; i >= 0; i--)
+        m = m.multiply(Peg.local(ancestors[i], frame, project));
+      return m;
+    },
+    apply(m, x, y) { return { x: m.a * x + m.c * y + m.e, y: m.b * x + m.d * y + m.f }; },
+    applyDelta(m, dx, dy) { return { dx: m.a * dx + m.c * dy, dy: m.b * dx + m.d * dy }; }
+  };
 
   /* ============================== History ============================== */
   class History extends Emitter {
