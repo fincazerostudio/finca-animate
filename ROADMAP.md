@@ -38,6 +38,7 @@ Tracking parity with Toon Boom Harmony Advanced.
 - [x] Drag the timeline ruler to set the project frame count
 - [x] Tool & view settings persist between sessions
 - [x] Keyframe easing presets (linear / smooth / ease in / ease out / hold)
+- [x] Light table (washed-out context layers, adjustable strength, isolate when off)
 
 ## Next
 - [ ] Function-curve editor (Bezier easing per channel)

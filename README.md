@@ -69,6 +69,9 @@ per-user copy (see `BUILD.md`).
 - Import a video as reference frames on the timeline (pulls in its sound too)
 
 **Drawing aids**
+- Light table (Alt+L) — other layers show washed out behind the one
+  you're drawing on, at an adjustable strength; turn it off to draw the
+  active layer alone
 - Grid and rule-of-thirds guides
 - Symmetry / mirror drawing
 

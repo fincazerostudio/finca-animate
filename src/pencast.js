@@ -176,6 +176,11 @@
       });
       // Onion-skin toggle / range change — pen needs the updated settings
       // AND any neighbour-frame cels it didn't have hydrated yet.
+      app.on('lighttablechange', () => {
+        if (!this.active) return;
+        this._publish({ op: 'tool-meta', meta: this._meta() });
+        this._schedule();
+      });
       app.on('onionchange', () => {
         if (!this.active) return;
         this._publishCelsForFrame();
@@ -522,6 +527,7 @@
         // Pen renders adjacent-frame cels under the live composite using
         // its own hydrated layer cache (cels arrive via vector-cel-replace
         // ops on frame / onion change, see _publishCelsForFrame).
+        lightTable: a.lightTable ? { on: !!a.lightTable.on, opacity: +a.lightTable.opacity || 0.3 } : null,
         onion: a.onion ? {
           on: !!a.onion.on,
           prev: a.onion.prev | 0,

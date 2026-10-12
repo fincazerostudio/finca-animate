@@ -807,6 +807,11 @@
       // adjacent-frame cels under the live composite using these values
       // and the pen's own hydrated layer cache. A change to the settings
       // means the base cache (which has onion baked in) needs rebuilding.
+      if ('lightTable' in meta) {
+        const sig = o => o ? (o.on + '|' + o.opacity) : '';
+        if (sig(this.state.lightTable) !== sig(meta.lightTable)) this._baseCacheDirty = true;
+        this.state.lightTable = meta.lightTable;
+      }
       if ('onion' in meta) {
         const prev = this.state.onion;
         const next = meta.onion;
@@ -1140,6 +1145,11 @@
       if (drawables < 2 || !s.activeLayerId) return null;
       return new Set([s.activeLayerId]);
     }
+    // Mirrors main's light table: washed-out opacity, or 0 to hide others.
+    _focusDim() {
+      const lt = this.state && this.state.lightTable;
+      return lt ? (lt.on ? lt.opacity : 0) : 0.3;
+    }
     // Render the full layer composite into a project-sized offscreen canvas
     // with selected strokes already excluded (their _lassoHidden flag is
     // honoured by renderCel). Called only when the cache is dirty.
@@ -1163,7 +1173,8 @@
         bg: false,
         includeVideo: false,
         eraserOverlay: s.eraserOverlay,
-        focusLayerIds: this._focusOpts()
+        focusLayerIds: this._focusOpts(),
+        focusDim: this._focusDim()
       }, {
         layerAncestors: layer => this._layerAncestors(layer)
       });
@@ -1285,7 +1296,8 @@
             wetLayerId: s.activeLayerId,
             includeVideo: false,         // D1: pen has no <video> element
             eraserOverlay: s.eraserOverlay,
-            focusLayerIds: this._focusOpts()
+            focusLayerIds: this._focusOpts(),
+            focusDim: this._focusDim()
           }, {
             layerAncestors: layer => this._layerAncestors(layer)
           });
