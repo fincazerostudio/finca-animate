@@ -302,6 +302,14 @@
     // overlay, so dismissing the launcher leaves a usable blank scene.
     _initialOpen() {
       const d = window.OpenToonDesktop;
+      // Batch render (opentoon-studio --render ...): no launcher, just the job.
+      if (d && d.render) {
+        d.render.job().then(job => { if (job) this.runRenderJob(job); else this._initialOpenGui(d); });
+        return;
+      }
+      this._initialOpenGui(d);
+    }
+    _initialOpenGui(d) {
       if (d && d.onOpenFile) d.onOpenFile(p => this._openPath(p));
       if (d && d.fs && d.fs.pendingFile) {
         d.fs.pendingFile()
@@ -1637,7 +1645,7 @@
       return peaks;
     }
     _loadAudioData(dataURL) {
-      fetch(dataURL).then(r => r.arrayBuffer())
+      return this._audioLoading = fetch(dataURL).then(r => r.arrayBuffer())
         .then(buf => this._audioContext().decodeAudioData(buf))
         .then(ab => {
           this.audioBuffer = ab;
@@ -1830,6 +1838,48 @@
       this.stage.fitToCamera();
       this.ui.refreshProjectInfo();
       this.ui.status('New project created');
+    }
+    // Command-line batch render: same exporters as File > Export. Reports
+    // progress / the file bytes back to the main process, which writes it.
+    async runRenderJob(job) {
+      const R = window.OpenToonDesktop.render;
+      try {
+        this._renderMode = true;
+        const data = await OT.IO.readProjectFrom(job.input);
+        this.loadProjectData(data);
+        if (this._audioLoading) await this._audioLoading;
+        const p = this.project, last = p.frameCount - 1;
+        const sc = job.scale || 1;
+        const f1 = n => U.clamp((n || 1) - 1, 0, last);
+        const opts = {
+          outW: Math.max(2, Math.round(p.width * sc)),
+          outH: Math.max(2, Math.round(p.height * sc)),
+          from: job.format === 'frame' ? f1(job.frame) : f1(job.from),
+          to: job.to ? f1(job.to) : last,
+          audio: job.audio !== false
+        };
+        R.progress(p.name + ': ' + p.width + 'x' + p.height + ' @ ' + p.fps + ' fps, frames ' +
+          (opts.from + 1) + '-' + (opts.to + 1) + ' -> ' + opts.outW + 'x' + opts.outH + ' ' + job.format);
+        let lastPct = -1;
+        const onProgress = (f, msg) => {
+          const pct = Math.floor(f * 10) * 10;
+          if (pct !== lastPct) { lastPct = pct; R.progress(pct + '%  ' + (msg || '')); }
+        };
+        const E = OT.IO.Export;
+        let out;
+        if (job.format === 'frame') {
+          await this.seekVideosTo(opts.from);
+          const cv = OT.IO.renderFrame(this, opts.from, opts.outW, opts.outH);
+          out = await new Promise(r => cv.toBlob(r, 'image/png'));
+        } else if (job.format === 'gif') out = await E.gif(this, opts, onProgress);
+        else if (job.format === 'mp4') out = await E.mp4(this, opts, onProgress);
+        else if (job.format === 'webm') out = await E.webm(this, opts, onProgress);
+        else out = await E.sequence(this, opts, onProgress);
+        const bytes = out instanceof Blob ? new Uint8Array(await out.arrayBuffer()) : new Uint8Array(out);
+        await R.done(bytes);
+      } catch (e) {
+        R.fail(e && e.message ? e.message : String(e));
+      }
     }
     loadProjectData(data) {
       this.stopAudio();

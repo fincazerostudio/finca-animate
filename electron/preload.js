@@ -42,6 +42,13 @@ contextBridge.exposeInMainWorld('OpenToonDesktop', {
   onPenStateAck: cb => ipcRenderer.on('opentoon:pen-state-ack', (_e, seq) => cb(seq)),
   onPenInput: cb => ipcRenderer.on('opentoon:pen-input', (_e, msg) => cb(msg)),
   onPenCommand: cb => ipcRenderer.on('opentoon:pen-command', (_e, msg) => cb(msg)),
+  // command-line batch render (opentoon-studio --render ...): null otherwise
+  render: {
+    job: () => ipcRenderer.invoke('opentoon:render-job').catch(() => null),
+    progress: msg => ipcRenderer.send('opentoon:render-progress', String(msg)),
+    done: bytes => ipcRenderer.invoke('opentoon:render-done', bytes),
+    fail: msg => ipcRenderer.send('opentoon:render-fail', String(msg))
+  },
   // real file IO for the desktop app: native dialogs, save-in-place, autosave
   fs: {
     saveDialog: (defaultPath) => ipcRenderer.invoke('opentoon:save-dialog', defaultPath),

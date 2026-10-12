@@ -595,9 +595,141 @@ function setupIpc() {
   });
 }
 
+
+/* ---------------- command-line batch render ----------------
+   opentoon-studio --render scene.otoon [-o out.mp4] [--scale 0.5]
+                   [--from N] [--to N] [--frame N] [--no-audio]
+   Boots the real app in a hidden window with a throwaway profile, runs the
+   same exporters as File > Export, writes the file and exits:
+   0 = written, 1 = render failed, 2 = bad arguments. */
+const RENDER_USAGE = [
+  'Usage: opentoon-studio --render <scene.otoon> [options]',
+  '',
+  '  -o, --out <file>   output file; the extension picks the format:',
+  '                     .mp4 .webm .gif .zip (PNG sequence) .png (one frame)',
+  '                     default: <scene>.mp4 next to the scene',
+  '  --scale <s>        output scale, e.g. 0.5 (default 1)',
+  '  --from <n>         first frame, 1-based (default 1)',
+  '  --to <n>           last frame, 1-based (default: last frame)',
+  '  --frame <n>        frame for .png output (default 1)',
+  '  --no-audio         leave the soundtrack out of .mp4 / .webm',
+  '',
+  'Video (.mp4 / .webm) records in real time, so it takes as long as the clip.',
+  'Needs a graphical session (Wayland/X11); on a headless box use xvfb-run.'
+].join('\n');
+
+function parseRenderArgs(argv) {
+  const i = argv.indexOf('--render');
+  if (i < 0) return null;
+  const args = argv.slice(i + 1);
+  const job = { audio: true };
+  const num = (flag, v) => {
+    const n = Number(v);
+    if (!Number.isFinite(n) || n <= 0) throw new Error(flag + ' needs a positive number');
+    return n;
+  };
+  for (let k = 0; k < args.length; k++) {
+    const a = args[k], next = () => {
+      if (k + 1 >= args.length) throw new Error(a + ' needs a value');
+      return args[++k];
+    };
+    if (a === '-h' || a === '--help') { job.help = true; }
+    else if (a === '-o' || a === '--out') job.out = next();
+    else if (a === '--scale') job.scale = num(a, next());
+    else if (a === '--from') job.from = Math.round(num(a, next()));
+    else if (a === '--to') job.to = Math.round(num(a, next()));
+    else if (a === '--frame') job.frame = Math.round(num(a, next()));
+    else if (a === '--no-audio') job.audio = false;
+    else if (a.startsWith('-')) {
+      if (/^--(dev|no-sandbox|enable-features|disable-gpu|ozone)/.test(a)) continue;   // chromium / launcher flags
+      throw new Error('unknown option ' + a);
+    }
+    else if (!job.input) job.input = a;
+    else throw new Error('unexpected argument ' + a);
+  }
+  if (job.help) return job;
+  if (!job.input) throw new Error('no scene given');
+  job.input = path.resolve(job.input);
+  if (!fs.existsSync(job.input)) throw new Error('scene not found: ' + job.input);
+  if (!job.out) job.out = job.input.replace(/\.otoon$/i, '') + '.mp4';
+  job.out = path.resolve(job.out);
+  const ext = path.extname(job.out).toLowerCase();
+  const formats = { '.mp4': 'mp4', '.webm': 'webm', '.gif': 'gif', '.zip': 'sequence', '.png': 'frame' };
+  job.format = formats[ext];
+  if (!job.format) throw new Error('unsupported output type "' + ext + '" (use .mp4 .webm .gif .zip .png)');
+  if (!fs.existsSync(path.dirname(job.out))) throw new Error('output folder does not exist: ' + path.dirname(job.out));
+  if (job.from && job.to && job.to < job.from) throw new Error('--to is before --from');
+  return job;
+}
+
+function runRender(job) {
+  // A private, disposable profile: never touches the user's prefs, autosave
+  // or a running OpenToon (no single-instance lock in this mode).
+  const profile = fs.mkdtempSync(path.join(require('os').tmpdir(), 'opentoon-render-'));
+  app.setPath('userData', profile);
+  // Chromium writes profile files during its own shutdown, after any of our
+  // code runs, so a detached helper (this same binary in plain-Node mode)
+  // waits for this process to exit and then deletes the folder.
+  const scheduleCleanup = () => {
+    const script = 'const fs=require("fs"),[pid,dir]=process.argv.slice(-2);' +
+      'const alive=()=>{try{process.kill(+pid,0);return true}catch(e){return false}};' +
+      'let n=0;const t=setInterval(()=>{if(!alive()||++n>600){clearInterval(t);' +
+      'setTimeout(()=>{try{fs.rmSync(dir,{recursive:true,force:true})}catch(e){}},300)}},100);';
+    try {
+      require('child_process').spawn(process.execPath, ['-e', script, String(process.pid), profile], {
+        detached: true, stdio: 'ignore', env: Object.assign({}, process.env, { ELECTRON_RUN_AS_NODE: '1' })
+      }).unref();
+    } catch (e) { /* worst case the OS clears its temp folder */ }
+  };
+  const finish = (code, msg) => {
+    if (msg) (code ? process.stderr : process.stdout).write(msg + '\n');
+    scheduleCleanup();
+    app.exit(code);
+  };
+  ipcMain.handle('opentoon:render-job', () => job);
+  ipcMain.on('opentoon:render-progress', (_e, msg) => process.stdout.write('  ' + msg + '\n'));
+  ipcMain.handle('opentoon:render-done', (_e, bytes) => {
+    try {
+      fs.writeFileSync(job.out, Buffer.from(bytes));
+      finish(0, 'Wrote ' + job.out + ' (' + Math.round(bytes.byteLength / 1024) + ' KB)');
+    } catch (e) { finish(1, 'Could not write ' + job.out + ': ' + e.message); }
+  });
+  ipcMain.on('opentoon:render-fail', (_e, msg) => finish(1, 'Render failed: ' + msg));
+  setupIpc();   // file reads for the renderer (read-file etc.)
+  app.whenReady().then(() => {
+    process.stdout.write('Rendering ' + job.input + ' -> ' + job.out + '\n');
+    const w = new BrowserWindow({
+      show: false, width: 1280, height: 800,
+      webPreferences: {
+        contextIsolation: true, nodeIntegration: false,
+        preload: path.join(__dirname, 'preload.js'),
+        backgroundThrottling: false
+      }
+    });
+    w.webContents.on('render-process-gone', (_e, d) => finish(1, 'Render failed: renderer exited (' + d.reason + ')'));
+    w.loadFile(path.join(__dirname, '..', 'index.html'));
+  });
+  app.on('window-all-closed', () => {});
+}
+
+let renderJob = null;
+try { renderJob = parseRenderArgs(process.argv); }
+catch (e) {
+  process.stderr.write('opentoon-studio: ' + e.message + '\n\n' + RENDER_USAGE + '\n');
+  app.exit(2);
+  renderJob = { failed: true };
+}
+
+if (renderJob && renderJob.failed) {
+  // bad arguments: already reported, exiting
+} else if (renderJob && renderJob.help) {
+  process.stdout.write(RENDER_USAGE + '\n');
+  app.exit(0);
+} else if (renderJob) {
+  runRender(renderJob);
 // Single-instance: a second launch (e.g. double-clicking another .otoon)
 // hands its file to the already-running window instead of opening twice.
-if (!app.requestSingleInstanceLock()) {
+} else if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   pendingOpenFile = argvFile(process.argv);

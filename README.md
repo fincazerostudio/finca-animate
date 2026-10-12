@@ -75,6 +75,10 @@ per-user copy (see `BUILD.md`).
 - Import a video as reference frames on the timeline (pulls in its sound too)
 
 **Drawing aids**
+- Shift & Trace (Alt+S) — slide, rotate or scale the onion-skin drawings
+  to line them up under the one you're tracing; snaps back when done
+- Perspective guides — 1- or 2-point, with draggable vanishing points
+  (View → Edit Perspective Guides); saved with the scene
 - Light table (Alt+L) — other layers show washed out behind the one
   you're drawing on, at an adjustable strength; turn it off to draw the
   active layer alone
@@ -113,6 +117,11 @@ per-user copy (see `BUILD.md`).
 - WebM video
 - PNG image sequence (ZIP)
 - Single-frame PNG
+- From the command line, without opening the app:
+  `opentoon-studio --render scene.otoon -o out.mp4` (also `.webm`, `.gif`,
+  `.zip` for a PNG sequence, `.png` for one frame; `--scale`, `--from`,
+  `--to`, `--frame`, `--no-audio`; `--render --help` lists them). Video
+  records in real time and needs a graphical session (or `xvfb-run`).
 
 ## Keyboard shortcuts
 
