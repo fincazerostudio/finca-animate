@@ -156,6 +156,8 @@
           { label: (a.showCamera ? '✓ ' : '') + 'Camera Guide', fn: () => a.toggleCamera() },
           { label: (a.onion.on ? '✓ ' : '') + 'Onion Skin', fn: () => a.toggleOnion() },
           { label: 'Onion Skin Settings…', fn: () => this.onionDialog() },
+          { label: (a.lightTable.on ? '✓ ' : '') + 'Light Table', sc: 'Alt+L', fn: () => a.toggleLightTable() },
+          { label: 'Light Table Strength…', fn: () => this.lightTableDialog() },
           { sep: 1 },
           { label: (a.stage && a.stage.flipH ? '✓ ' : '') + 'Flip View Horizontal', sc: 'M', fn: () => a.toggleFlipH() },
           { label: (a.stage && a.stage.flipV ? '✓ ' : '') + 'Flip View Vertical', fn: () => a.toggleFlipV() },
@@ -1014,10 +1016,14 @@
       this.camBtn = mk('Camera', () => a.toggleCamera(), 'Toggle camera guide');
       this.onionSplit = this._mkOnionSplit();
       this.gridBtn = mk('Grid', () => a.toggleGrid(), 'Toggle grid');
+      this.lightBtn = mk('Light Table', () => a.toggleLightTable(),
+        'Light table (Alt+L): show other layers washed out; off draws the active layer alone. Right-click for strength.');
+      this.lightBtn.addEventListener('contextmenu', e => { e.preventDefault(); this.lightTableDialog(); });
       this.flipHBtn = mk('Flip H', () => a.toggleFlipH(), 'Flip view horizontally (M)');
       this.flipVBtn = mk('Flip V', () => a.toggleFlipV(), 'Flip view vertically');
       vb.appendChild(this.camBtn);
       vb.appendChild(this.onionSplit);
+      vb.appendChild(this.lightBtn);
       vb.appendChild(this.gridBtn);
       vb.appendChild(this.flipHBtn);
       vb.appendChild(this.flipVBtn);
@@ -1036,6 +1042,7 @@
       this.camBtn.classList.toggle('on', this.app.showCamera);
       if (this.onionVB) this.onionVB.classList.toggle('on', this.app.onion.on);
       if (this.onionChev) this.onionChev.classList.toggle('on', this.app.onion.on);
+      if (this.lightBtn) this.lightBtn.classList.toggle('on', this.app.lightTable.on);
       this.flipHBtn.classList.toggle('on', this.app.stage.flipH);
       this.flipVBtn.classList.toggle('on', this.app.stage.flipV);
       if (this.gridBtn) this.gridBtn.classList.toggle('on', this.app.grid && this.app.grid.on);
@@ -1612,6 +1619,21 @@
           }
         }
       ]);
+    }
+
+    lightTableDialog() {
+      const a = this.app, lt = a.lightTable;
+      const pct = el('span', { text: Math.round(lt.opacity * 100) + '%' });
+      const slider = el('input', { type: 'range', min: 0.05, max: 1, step: 0.05, value: lt.opacity });
+      slider.addEventListener('input', () => {
+        a.setLightTableOpacity(parseFloat(slider.value));
+        pct.textContent = Math.round(lt.opacity * 100) + '%';
+      });
+      const body = el('div', { style: { display: 'flex', flexDirection: 'column', gap: '9px' } }, [
+        el('div', { class: 'chk-row', text: 'How strongly other layers show behind the active one.' }),
+        this._field('Strength', el('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } }, [slider, pct]))
+      ]);
+      this.modal('Light Table', body, [{ label: 'Close', primary: true }]);
     }
 
     gridDialog() {

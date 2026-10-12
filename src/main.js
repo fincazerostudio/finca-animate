@@ -133,6 +133,7 @@
       } },
     { id: 'fit', label: 'Fit to camera', cat: 'View', def: 'shift+\\', run: a => a.stage.fitToCamera() },
     { id: 'flip-h', label: 'Flip view horizontally', cat: 'View', def: 'shift+m', run: a => a.toggleFlipH() },
+    { id: 'light-table', label: 'Light table', cat: 'View', def: 'alt+l', noRepeat: 1, run: a => a.toggleLightTable() },
     { id: 'clean-view', label: 'Clean canvas (hide panels)', cat: 'View', def: 'tab', prevent: 1, noRepeat: 1, run: a => a.toggleCleanView() }
   ];
   OT.KEY_COMMANDS = KEY_COMMANDS;
@@ -206,6 +207,10 @@
         prevColor: '#e0533d', nextColor: '#52b669',
         minAlpha: 0.12, maxAlpha: 0.42
       };
+      // Light table: on = other layers show washed out at `opacity` behind
+      // the active one; off = the active layer is drawn alone (Harmony's
+      // Drawing view). Preview only -- export and playback ignore it.
+      this.lightTable = { on: true, opacity: 0.3 };
       this.showCamera = true;
       this.cleanView = false;
       this.grid = { on: false, size: 64, guides: false };
@@ -356,6 +361,7 @@
         if (h < 1100 || h === 1500 || h === 2000) this.settings.shapeSnapHoldMs = 1300;
         if (pr.onion) Object.assign(this.onion, pr.onion);
         if (pr.grid) Object.assign(this.grid, pr.grid);
+        if (pr.lightTable) Object.assign(this.lightTable, pr.lightTable);
         if (pr.symmetry) Object.assign(this.symmetry, pr.symmetry);
         if (typeof pr.showCamera === 'boolean') this.showCamera = pr.showCamera;
         if (pr.loopMode && this.playback) this.playback.loopMode = pr.loopMode;
@@ -375,6 +381,7 @@
         localStorage.setItem('opentoon.prefs', JSON.stringify({
           settings: this.settings, onion: this.onion,
           grid: this.grid, symmetry: this.symmetry,
+          lightTable: this.lightTable,
           showCamera: this.showCamera,
           loopMode: this.playback ? this.playback.loopMode : null,
           recentFiles: this.recentFiles,
@@ -1424,6 +1431,16 @@
       this.onion.on = !this.onion.on;
       this.emit('onionchange'); this.emit('render');
       this.ui.status('Onion skin ' + (this.onion.on ? 'on' : 'off'));
+    }
+    toggleLightTable() {
+      this.lightTable.on = !this.lightTable.on;
+      this.emit('lighttablechange'); this.emit('render');
+      this.ui.status('Light table ' + (this.lightTable.on ? 'on' : 'off — active layer only'));
+    }
+    setLightTableOpacity(v) {
+      this.lightTable.opacity = U.clamp(v, 0.05, 1);
+      this.lightTable.on = true;
+      this.emit('lighttablechange'); this.emit('render');
     }
 
     /* ---------------- playback range / view flip ---------------- */

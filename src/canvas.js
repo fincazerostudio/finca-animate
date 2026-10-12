@@ -235,7 +235,8 @@
 
     // Build the focus-layer set for the current frame. The active layer
     // PLUS every layer in the multi-selection counts as focused; every
-    // other drawable layer gets dimmed at composite time. Returns the
+    // other drawable layer gets dimmed (light table) or hidden (light
+    // table off) at composite time. Returns the
     // bare set in an opts object (or {} to skip). The dim is a preview
     // only — layer.opacity is never mutated.
     _focusComposite() {
@@ -253,7 +254,8 @@
         for (const l of a.selectedLayers) if (l && l.id) ids.add(l.id);
       }
       if (!ids.size) return {};
-      return { focusLayerIds: ids };
+      const lt = a.lightTable;
+      return { focusLayerIds: ids, focusDim: lt && !lt.on ? 0 : (lt ? lt.opacity : 0.3) };
     }
     /* ---------------- render ---------------- */
     render() {

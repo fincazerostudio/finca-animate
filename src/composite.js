@@ -120,8 +120,10 @@
       }
       const cel = layer.celAt(frame);
       if (!cel) continue;
+      const op = worldOpacity(layer);
+      if (op <= 0) continue;                      // e.g. light table off
       ctx.save();
-      ctx.globalAlpha = worldOpacity(layer);
+      ctx.globalAlpha = op;
       applyWorldXform(ctx, layer, frame, project, layerAncestors);
 
       const isActive = wetLayerId && layer.id === wetLayerId;
