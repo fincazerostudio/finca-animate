@@ -609,7 +609,7 @@
         // circles main does. Without this the pen would render strokes
         // intact after commit -- the erased view would disappear.
         cel.eraserMarks = Array.isArray(celSnap.eraserMarks)
-          ? celSnap.eraserMarks.map(m => ({ x: m.x, y: m.y, r: m.r }))
+          ? celSnap.eraserMarks.map(m => m.art ? { x: m.x, y: m.y, r: m.r, art: m.art } : { x: m.x, y: m.y, r: m.r })
           : [];
         // Populate cel.canvas so onion / thumbnails / any drawImage path
         // sees rendered pixels — compositeStage for vector cels re-renders

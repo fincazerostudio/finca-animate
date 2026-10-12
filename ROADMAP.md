@@ -44,6 +44,8 @@ Tracking parity with Toon Boom Harmony Advanced.
 - [x] Shift & Trace (Alt+S)
 - [x] Perspective guides (1- / 2-point)
 - [x] Command-line batch render (`--render`)
+- [x] Linked palette colours (edit a swatch → linked strokes recolour)
+- [x] Line Art / Colour Art layers on vector drawings
 
 ## Next
 - [ ] Function-curve editor (Bezier easing per channel)

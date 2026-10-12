@@ -42,6 +42,8 @@ per-user copy (see `BUILD.md`).
 - Smart paint bucket — fills the region enclosed by your lines, with
   adjustable gap closing and a live hover highlight of the area
 - Stroke-aware eraser (splits strokes) and stroke select / move / delete
+- Line Art / Colour Art (Alt+C) — paint and shade on Colour Art, which
+  always sits under the lines; the eraser only cuts the art layer you're on
 
 **Cut-out animation**
 - Per-layer transform keyframes (position / scale / rotation)
@@ -98,6 +100,9 @@ per-user copy (see `BUILD.md`).
 - Named color palette with swatches
 - HSV picker + hex input
 - Add / remove / reorder swatches
+- Linked palette colours — strokes remember the swatch they were drawn
+  with; right-click a swatch → Edit Colour recolours every linked stroke
+  in the project (live preview, one undo step)
 
 **Camera**
 - Camera framing guide

@@ -198,6 +198,9 @@
           { label: 'Move Layer Down', fn: () => a.moveLayer(a.activeLayer(), -1) },
           { label: 'Merge Down', fn: () => a.mergeDown(a.activeLayer()) },
           { sep: 1 },
+          { label: (a.artMode === 'color' ? '' : '✓ ') + 'Draw on Line Art', sc: 'Alt+C', fn: () => a.setArtMode('line') },
+          { label: (a.artMode === 'color' ? '✓ ' : '') + 'Draw on Colour Art', sc: 'Alt+C', fn: () => a.setArtMode('color') },
+          { sep: 1 },
           { label: 'Add Peg (Parent Folder)', fn: () => a.addPeg(a.activeLayer()) },
           { label: 'Transform Layer Tool', sc: 'A', fn: () => a.tools.select('transform') },
           { label: 'Set Transform Keyframe', fn: () => a.setLayerKeyHere() },
@@ -1025,6 +1028,9 @@
       this.camBtn = mk('Camera', () => a.toggleCamera(), 'Toggle camera guide');
       this.onionSplit = this._mkOnionSplit();
       this.gridBtn = mk('Grid', () => a.toggleGrid(), 'Toggle grid');
+      this.artBtn = mk('Line Art', () => a.toggleArtMode(),
+        'Line Art / Colour Art (Alt+C): which art layer new strokes go on. Colour Art always sits under the lines.');
+      a.on('artmodechange', () => this._refreshViewbar());
       this.lightBtn = mk('Light Table', () => a.toggleLightTable(),
         'Light table (Alt+L): show other layers washed out; off draws the active layer alone. Right-click for strength.');
       this.lightBtn.addEventListener('contextmenu', e => { e.preventDefault(); this.lightTableDialog(); });
@@ -1032,6 +1038,7 @@
       this.flipVBtn = mk('Flip V', () => a.toggleFlipV(), 'Flip view vertically');
       vb.appendChild(this.camBtn);
       vb.appendChild(this.onionSplit);
+      vb.appendChild(this.artBtn);
       vb.appendChild(this.lightBtn);
       vb.appendChild(this.gridBtn);
       vb.appendChild(this.flipHBtn);
@@ -1052,6 +1059,11 @@
       if (this.onionVB) this.onionVB.classList.toggle('on', this.app.onion.on);
       if (this.onionChev) this.onionChev.classList.toggle('on', this.app.onion.on);
       if (this.lightBtn) this.lightBtn.classList.toggle('on', this.app.lightTable.on);
+      if (this.artBtn) {
+        const col = this.app.artMode === 'color';
+        this.artBtn.textContent = col ? 'Colour Art' : 'Line Art';
+        this.artBtn.classList.toggle('on', col);
+      }
       this.flipHBtn.classList.toggle('on', this.app.stage.flipH);
       this.flipVBtn.classList.toggle('on', this.app.stage.flipV);
       if (this.gridBtn) this.gridBtn.classList.toggle('on', this.app.grid && this.app.grid.on);
@@ -1390,7 +1402,7 @@
       document.getElementById('modal-root').style.pointerEvents = 'none';
     }
 
-    modal(title, bodyEl, buttons) {
+    modal(title, bodyEl, buttons, opts) {
       const root = document.getElementById('modal-root');
       root.style.pointerEvents = 'auto';
       const box = el('div', { class: 'modal' });
@@ -1417,6 +1429,7 @@
         closed = true;
         window.removeEventListener('keydown', onKey, true);
         bg.remove();
+        if (opts && opts.onClose) { try { opts.onClose(); } catch (_) {} }
         if (!root.children.length) root.style.pointerEvents = 'none';
         // restore previous focus if it still exists
         if (prevFocus && typeof prevFocus.focus === 'function' && document.body.contains(prevFocus)) {
@@ -1627,6 +1640,38 @@
             this.app.emit('onionchange'); this.app.emit('render');
           }
         }
+      ]);
+    }
+
+    // Edit a palette swatch: every stroke drawn with it follows live.
+    editSwatchDialog(id) {
+      const a = this.app, sw = a.palette.byId(id);
+      if (!sw || !a.beginSwatchEdit(id)) return;
+      const linked = a.swatchUseCount(id);
+      const pick = el('input', { type: 'color', value: sw.color });
+      const hex = el('input', { type: 'text', value: sw.color, maxlength: 7, style: { width: '90px' } });
+      const set = v => { if (/^#[0-9a-f]{6}$/i.test(v)) { pick.value = v; hex.value = v; a.previewSwatch(v.toLowerCase()); } };
+      pick.addEventListener('input', () => set(pick.value));
+      hex.addEventListener('input', () => set(hex.value.trim()));
+      let done = false;
+      const body = el('div', { style: { display: 'flex', flexDirection: 'column', gap: '9px' } }, [
+        el('div', { class: 'chk-row', text: linked
+          ? linked + (linked === 1 ? ' stroke in this project uses "' : ' strokes in this project use "') + sw.name + '" and will change with it.'
+          : 'No strokes use "' + sw.name + '" yet. Strokes drawn with it will follow future edits.' }),
+        this._field('Colour', el('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } }, [pick, hex]))
+      ]);
+      this.modal('Edit Swatch — ' + sw.name, body, [
+        { label: 'Cancel' },
+        { label: 'Apply', primary: true, fn: () => { done = true; a.commitSwatchEdit(); } }
+      ], { onClose: () => { if (!done) a.cancelSwatchEdit(); } });   // Cancel / Esc / × / backdrop
+    }
+    renameSwatchDialog(id) {
+      const a = this.app, sw = a.palette.byId(id);
+      if (!sw) return;
+      const name = el('input', { type: 'text', value: sw.name });
+      this.modal('Rename Swatch', this._field('Name', name), [
+        { label: 'Cancel' },
+        { label: 'Rename', primary: true, fn: () => { sw.name = name.value.trim() || sw.name; a.dirty = true; a.emit('palettechange'); } }
       ]);
     }
 

@@ -13,18 +13,23 @@
 
   class Palette {
     constructor(colors) {
+      // Every swatch has a stable id: strokes drawn with it store the id,
+      // so editing the swatch recolours them (linked palette colours).
       this.swatches = (colors || DEFAULT_SWATCHES).map((c, i) => ({
-        name: 'Color ' + (i + 1), color: c
+        id: U.uid(), name: 'Color ' + (i + 1), color: c
       }));
     }
     add(color) {
-      this.swatches.push({ name: 'Color ' + (this.swatches.length + 1), color: color || '#ffffff' });
+      const sw = { id: U.uid(), name: 'Color ' + (this.swatches.length + 1), color: color || '#ffffff' };
+      this.swatches.push(sw);
+      return sw;
     }
     removeAt(i) { this.swatches.splice(i, 1); }
-    serialize() { return this.swatches.map(s => ({ name: s.name, color: s.color })); }
+    byId(id) { return id ? this.swatches.find(s => s.id === id) || null : null; }
+    serialize() { return this.swatches.map(s => ({ id: s.id, name: s.name, color: s.color })); }
     static load(arr) {
       const p = new Palette([]);
-      p.swatches = (arr || []).map(s => ({ name: s.name || 'Color', color: s.color }));
+      p.swatches = (arr || []).map(s => ({ id: s.id || U.uid(), name: s.name || 'Color', color: s.color }));
       if (!p.swatches.length) return new Palette();
       return p;
     }
@@ -178,25 +183,37 @@
       this.swWrap.innerHTML = '';
       p.swatches.forEach((s, i) => {
         const el = U.el('div', {
-          class: 'swatch' + (i === this.selIndex ? ' sel' : ''),
-          title: s.name + '  ' + s.color,
+          class: 'swatch' + (s.id === this.app.swatchId ? ' sel' : ''),
+          title: s.name + '  ' + s.color + '  (right-click: edit / rename / delete)',
           style: { background: s.color }
         });
         el.addEventListener('click', () => {
           this.selIndex = i;
+          this.app.swatchId = s.id;
           this.setFromHex(s.color);
           this._commit();
           this._renderSwatches();
         });
         el.addEventListener('contextmenu', e => {
           e.preventDefault();
-          if (p.swatches.length > 1) { p.removeAt(i); this.app.emit('palettechange'); }
+          const a = this.app, linked = a.swatchUseCount(s.id);
+          a.ui.contextMenu(e.clientX, e.clientY, [
+            { label: 'Edit Colour…' + (linked ? '  (' + linked + ' linked)' : ''), fn: () => a.ui.editSwatchDialog(s.id) },
+            { label: 'Rename…', fn: () => a.ui.renameSwatchDialog(s.id) },
+            { sep: 1 },
+            { label: 'Delete Swatch', fn: () => {
+              if (p.swatches.length <= 1) return;
+              p.removeAt(p.swatches.indexOf(s));
+              if (a.swatchId === s.id) a.swatchId = null;
+              a.emit('palettechange');
+            } }
+          ]);
         });
         this.swWrap.appendChild(el);
       });
       const add = U.el('div', { class: 'swatch add', title: 'Add current colour' }, ['+']);
       add.addEventListener('click', () => {
-        p.add(this.app.color);
+        this.app.swatchId = p.add(this.app.color).id;
         this.app.emit('palettechange');
       });
       this.swWrap.appendChild(add);

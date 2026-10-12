@@ -170,7 +170,12 @@ window.OT = window.OT || {};
       // Fills sit UNDER line strokes in renderCel's ordering. Appending
       // a fill on top would render it in the wrong z-order, so use the
       // full rebuild path for fills.
-      if (stroke.type === 'fill') { this.rebuild(); return; }
+      // Colour Art (and fills) render under line art, and line-art eraser
+      // marks must not cut colour, so those cases take the full rebuild.
+      if (stroke.type === 'fill' || stroke.art === 'color' ||
+          (this.eraserMarks && this.eraserMarks.length && this.strokes.some(s => OT.Vector.isColorArt(s)))) {
+        this.rebuild(); return;
+      }
       OT.Vector.renderStroke(this.ctx, stroke);
       // Re-apply eraser cuts so the new stroke is also clipped by any
       // existing marks (matches what a full rebuild would produce — the

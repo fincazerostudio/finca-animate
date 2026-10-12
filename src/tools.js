@@ -4,6 +4,22 @@
   const U = OT.util;
   const V = () => OT.Vector;
 
+  // New vector strokes remember the art layer they were drawn on and, when
+  // drawn with a palette swatch, which swatch (linked palette colours).
+  function tagStroke(st) {
+    const a = OT.app;
+    if (!a || !st) return st;
+    if (st.type !== 'fill' && a.artMode === 'color') st.art = 'color'; else delete st.art;
+    linkSwatch(st, a);
+    return st;
+  }
+  function linkSwatch(st, a) {
+    const sw = a.swatchId && a.palette && a.palette.byId(a.swatchId);
+    if (sw && String(st.color).toLowerCase() === String(sw.color).toLowerCase()) st.swatch = sw.id;
+    else delete st.swatch;
+  }
+  OT.tagStroke = tagStroke;
+
   function isDrawable(layer) {
     return layer && (layer.type === 'drawing' || layer.type === 'vector');
   }
@@ -731,6 +747,7 @@
         pts: pts, closed: closed
       };
       this.pendingStrokeId = null;
+      tagStroke(stroke);
       cel.strokes.push(stroke);
       // Fast path: draw just this stroke on top of the existing cel.canvas
       // instead of re-rasterising every stroke. Turns the per-commit cost
@@ -893,6 +910,17 @@
       const r = this.size / 2;
       const samples = pending.samples;
       pending.samples = [];
+      const art = (OT.app && OT.app.artMode === 'color') ? 'color' : 'line';
+      const mixed = pending.cel.kind === 'vector' && pending.cel.strokes &&
+        pending.cel.strokes.some(s => V().isColorArt(s)) && pending.cel.strokes.some(s => !V().isColorArt(s));
+      if (mixed) {
+        if (!Array.isArray(pending.cel.eraserMarks)) pending.cel.eraserMarks = [];
+        for (const s of samples) pending.cel.eraserMarks.push({ x: s.x, y: s.y, r: r, art });
+        pending.cel.rebuild();
+        this.changed = true;
+        pending.app.emit('render');
+        return;
+      }
       // Pass 1: destructive punch on cel.canvas — instant visual
       // feedback regardless of stroke count.
       const ctx = pending.cel.ctx;
@@ -911,7 +939,7 @@
       // Pass 2: append to cel.eraserMarks (NOT modifying cel.strokes).
       // Each sample becomes a render-time destination-out circle.
       if (!Array.isArray(pending.cel.eraserMarks)) pending.cel.eraserMarks = [];
-      for (const s of samples) pending.cel.eraserMarks.push({ x: s.x, y: s.y, r: r });
+      for (const s of samples) pending.cel.eraserMarks.push({ x: s.x, y: s.y, r: r, art });
       this.changed = true;
       // Ship the destruction samples to anything that wants to mirror
       // the live erase visual (pen window via pencast). Pen window
@@ -1196,6 +1224,7 @@
           pts: pts, closed: closed
         };
         this.pendingStrokeId = null;
+        tagStroke(stroke);
         cel.strokes.push(stroke);
         if (app.symmetry && app.symmetry.on) {
           cel.strokes.push(V().mirrorStroke(stroke, app.symmetry.axis,
@@ -1418,10 +1447,10 @@
         app.ui.status('Region is not closed - increase Gap Closing or connect the line ends');
         return;
       }
-      cel.strokes.push({
+      cel.strokes.push(tagStroke({
         id: U.uid(), type: 'fill', color: app.color, opacity: 1,
         contour: res.contour, grow: gap
-      });
+      }));
       cel.rebuild();
       app.history.pushCelEdit('fill', cel, before);
       app.emit('render'); app.emit('celchange');
@@ -1629,7 +1658,7 @@
           id: U.uid(), type: 'fill', color: app.color, opacity: 1,
           contour: geo.pts.map(p => ({ x: p.x, y: p.y })), grow: 0
         };
-        cel.strokes.push(f); added.push(f);
+        tagStroke(f); cel.strokes.push(f); added.push(f);
       }
       if (!geo.closed || s.shapeStroke) {
         const ln = {
@@ -1637,7 +1666,7 @@
           color: app.color, width: s.shapeStrokeWidth, opacity: 1,
           pts: geo.pts.map(p => ({ x: p.x, y: p.y })), closed: geo.closed
         };
-        cel.strokes.push(ln); added.push(ln);
+        tagStroke(ln); cel.strokes.push(ln); added.push(ln);
       }
       if (app.symmetry && app.symmetry.on) {
         for (const st of added)
@@ -2228,7 +2257,7 @@
       for (const st of this.vsel) if (st.color !== hex) { anyChange = true; break; }
       if (!anyChange) return false;
       const before = this.vcel.snapshot();
-      for (const st of this.vsel) st.color = hex;
+      for (const st of this.vsel) { st.color = hex; linkSwatch(st, app); }
       this.vcel.rebuild();
       app.history.pushCelEdit('Recolor selection', this.vcel, before);
       app.emit('render'); app.emit('celchange');
@@ -3750,7 +3779,7 @@
       }
       if (!anyChange) return false;
       const before = this.vcel.snapshot();
-      for (const st of this.vsel) st.color = hex;
+      for (const st of this.vsel) { st.color = hex; linkSwatch(st, app); }
       // If a transform session has a snippet, the snippet was rendered with
       // the old colour — rebuild it so the live overlay shows the new tint.
       if (this.vt && this.vt.preview && (this.transformMode === 'uniform'

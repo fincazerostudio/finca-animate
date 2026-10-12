@@ -21,6 +21,8 @@
     if (st.closed) out.closed = true;
     if (st.taper != null) out.taper = st.taper;
     if (st.grow != null) out.grow = st.grow;
+    if (st.art) out.art = st.art;
+    if (st.swatch) out.swatch = st.swatch;
     return out;
   }
   OT._serializeStroke = serializeStroke;
@@ -58,7 +60,7 @@
         // pen would render strokes un-erased on every commit, and the
         // user would see the mask "snap back" the moment the live drag
         // ended.
-        eraserMarks: (cel.eraserMarks || []).map(m => ({ x: m.x, y: m.y, r: m.r }))
+        eraserMarks: (cel.eraserMarks || []).map(m => m.art ? { x: m.x, y: m.y, r: m.r, art: m.art } : { x: m.x, y: m.y, r: m.r })
       };
     }
     // raster cels are placeholder in D1 (D2 sends pixel data)

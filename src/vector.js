@@ -293,24 +293,59 @@
     // transform drag — that turns the per-frame cost from O(N strokes) into
     // O(1) drawImage, which is the difference between smooth and laggy on
     // large selections.
-    for (const st of cel.strokes) if (st.type === 'fill' && !st._lassoHidden) renderStroke(ctx, st);
-    for (const st of cel.strokes) if (st.type !== 'fill' && !st._lassoHidden) renderStroke(ctx, st);
-    // Non-destructive eraser marks: punch destination-out circles AFTER
-    // every stroke is drawn. cel.strokes itself is never modified by the
-    // eraser, so on subsequent renders the strokes are still exactly the
-    // shape the artist drew. cel.canvas just shows the erased view.
-    if (cel.eraserMarks && cel.eraserMarks.length) {
-      ctx.save();
-      ctx.globalCompositeOperation = 'destination-out';
-      ctx.fillStyle = '#000';
-      for (const m of cel.eraserMarks) {
-        ctx.beginPath();
-        ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.restore();
+    // Colour Art (fills + strokes tagged art:'color') always sits under
+    // Line Art. Untagged strokes are line art, so older drawings render as
+    // they always did (fills under lines).
+    const marks = cel.eraserMarks || [];
+    for (const st of cel.strokes) if (isColorArt(st) && !st._lassoHidden) renderStroke(ctx, st);
+    if (!marks.length) {
+      for (const st of cel.strokes) if (!isColorArt(st) && !st._lassoHidden) renderStroke(ctx, st);
+      cel.dirty();
+      return;
     }
+    // Non-destructive eraser marks: destination-out circles applied at
+    // render time; cel.strokes itself is never modified by the eraser, so
+    // strokes keep exactly the shape the artist drew. A mark only cuts the
+    // art layer it was made on: line-art strokes are drawn on a scratch
+    // canvas so their marks can't punch through the colour beneath.
+    // Untagged (older) marks cut both, as before.
+    if (!marks.some(m => m.art)) {
+      // only older marks: the original single pass, so existing drawings
+      // render exactly as they always did (incl. anti-aliased mark edges)
+      for (const st of cel.strokes) if (!isColorArt(st) && !st._lassoHidden) renderStroke(ctx, st);
+      punch(ctx, marks, () => true);
+      cel.dirty();
+      return;
+    }
+    punch(ctx, marks, m => m.art !== 'line');
+    const t = scratch(cel.w, cel.h), tx = t.getContext('2d');
+    tx.setTransform(1, 0, 0, 1, 0, 0);
+    tx.globalAlpha = 1; tx.globalCompositeOperation = 'source-over';
+    tx.clearRect(0, 0, cel.w, cel.h);
+    for (const st of cel.strokes) if (!isColorArt(st) && !st._lassoHidden) renderStroke(tx, st);
+    punch(tx, marks, m => m.art !== 'color');
+    ctx.drawImage(t, 0, 0);
     cel.dirty();
+  }
+  function isColorArt(st) { return st.type === 'fill' || st.art === 'color'; }
+  function punch(ctx, marks, keep) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.fillStyle = '#000';
+    for (const m of marks) {
+      if (!keep(m)) continue;
+      ctx.beginPath();
+      ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+  let _scratch = null;
+  function scratch(w, h) {
+    if (!_scratch) _scratch = document.createElement('canvas');
+    if (_scratch.width !== w) _scratch.width = w;
+    if (_scratch.height !== h) _scratch.height = h;
+    return _scratch;
   }
 
   /* ----------------------------- hit testing ----------------------------- */
@@ -1052,7 +1087,7 @@
   OT.Vector = {
     simplify, smoothPts, smoothPath, samplesOf,
     renderStroke, renderCel, renderLine,
-    strokeHit, strokeBounds, pointInPoly,
+    strokeHit, strokeBounds, pointInPoly, isColorArt,
     eraseStroke, snapPoint, computeFill, mirrorStroke,
     detectShape, shapeToPts,
     alignClosedPath, alignOpenPath

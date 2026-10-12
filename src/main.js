@@ -136,6 +136,7 @@
     { id: 'flip-h', label: 'Flip view horizontally', cat: 'View', def: 'shift+m', run: a => a.toggleFlipH() },
     { id: 'light-table', label: 'Light table', cat: 'View', def: 'alt+l', noRepeat: 1, run: a => a.toggleLightTable() },
     { id: 'shift-trace', label: 'Shift & Trace', cat: 'View', def: 'alt+s', noRepeat: 1, run: a => a.toggleShiftTrace() },
+    { id: 'art-toggle', label: 'Toggle Line Art / Colour Art', cat: 'Tools', def: 'alt+c', noRepeat: 1, run: a => a.toggleArtMode() },
     { id: 'clean-view', label: 'Clean canvas (hide panels)', cat: 'View', def: 'tab', prevent: 1, noRepeat: 1, run: a => a.toggleCleanView() }
   ];
   OT.KEY_COMMANDS = KEY_COMMANDS;
@@ -216,6 +217,8 @@
       // Shift & Trace: temporarily offset the onion-skin drawings to trace
       // from them; never touches the drawings and resets when turned off.
       this.shiftTrace = { on: false, x: 0, y: 0, rot: 0, scale: 1 };
+      this.artMode = 'line';       // Line Art / Colour Art (vector layers)
+      this.swatchId = null;        // palette swatch the current colour is linked to
       this.showCamera = true;
       this.cleanView = false;
       this.grid = { on: false, size: 64, guides: false };
@@ -659,6 +662,15 @@
     }
     setColor(hex) {
       this.color = hex;
+      // Keep the swatch link while the colour still is that swatch; otherwise
+      // link to a swatch of exactly this colour (eyedropper, hex entry), or none.
+      const cur = this.palette && this.palette.byId(this.swatchId);
+      const same = c => String(c).toLowerCase() === String(hex).toLowerCase();
+      if (!cur || !same(cur.color)) {
+        const m = this.palette && this.palette.swatches.find(s => same(s.color));
+        this.swatchId = m ? m.id : null;
+      }
+      if (this.colorPanel && this.colorPanel.swWrap) this.colorPanel._renderSwatches();
       this.emit('colorchange', hex);
       // Active vector selection in either Select or Lasso → recolour those
       // strokes. Matches "select → click swatch → lines turn that colour".
@@ -1514,6 +1526,76 @@
       this.emit('render');
       this.ui.status('Perspective guides ' + (g.on ? 'on' : 'off'));
     }
+    /* ---------------- Line Art / Colour Art ---------------- */
+    // Vector drawings have two art layers: new strokes go on the current
+    // one; Colour Art always renders under Line Art; the eraser only cuts
+    // the current one. The paint bucket's fills are always Colour Art.
+    setArtMode(mode) {
+      this.artMode = mode === 'color' ? 'color' : 'line';
+      this.emit('artmodechange');
+      this.ui.status('Drawing on ' + (this.artMode === 'color' ? 'Colour Art (under the lines)' : 'Line Art'));
+    }
+    toggleArtMode() { this.setArtMode(this.artMode === 'color' ? 'line' : 'color'); }
+
+    /* ---------------- linked palette colours ---------------- */
+    _vectorCels() {
+      const out = [];
+      for (const l of this.project.layers) for (const n in (l.cels || {})) {
+        const c = l.cels[n];
+        if (c && c.kind === 'vector' && c.strokes) out.push(c);
+      }
+      return out;
+    }
+    swatchUseCount(id) {
+      let n = 0;
+      for (const c of this._vectorCels()) for (const st of c.strokes) if (st.swatch === id) n++;
+      return n;
+    }
+    // Live swatch edit: preview recolours every linked stroke in the whole
+    // project; commit makes it one undo step; cancel puts it all back.
+    beginSwatchEdit(id) {
+      const sw = this.palette.byId(id);
+      if (!sw) return false;
+      const cels = this._vectorCels().filter(c => c.strokes.some(st => st.swatch === id));
+      this._swEdit = { id, sw, old: sw.color, cels, before: cels.map(c => c.snapshot()) };
+      return true;
+    }
+    previewSwatch(hex) {
+      const e = this._swEdit; if (!e) return;
+      e.sw.color = hex;
+      for (const c of e.cels) {
+        for (const st of c.strokes) if (st.swatch === e.id) st.color = hex;
+        c.rebuild();
+      }
+      if (this.swatchId === e.id) { this.color = hex; this.emit('colorchange', hex); }
+      this.colorPanel._renderSwatches();
+      this.emit('render');
+    }
+    commitSwatchEdit() {
+      const e = this._swEdit; if (!e) return;
+      this._swEdit = null;
+      const after = e.cels.map(c => c.snapshot()), nu = e.sw.color;
+      if (nu === e.old) return;
+      const apply = (snaps, col) => {
+        e.sw.color = col;
+        e.cels.forEach((c, i) => c.restore(snaps[i]));
+        if (this.swatchId === e.id) { this.color = col; this.emit('colorchange', col); }
+        this.colorPanel._renderSwatches();
+        this.emit('celchange'); this.emit('render');
+      };
+      this.history.push({ label: 'Edit swatch colour', undo: () => apply(e.before, e.old), redo: () => apply(after, nu) });
+      this.dirty = true;
+      this.emit('celchange');
+      this.ui.status('Swatch recoloured — ' + e.cels.length + ' drawing' + (e.cels.length === 1 ? '' : 's') + ' updated');
+    }
+    cancelSwatchEdit() {
+      const e = this._swEdit; if (!e) return;
+      this.previewSwatch(e.old);
+      e.cels.forEach((c, i) => c.restore(e.before[i]));
+      this._swEdit = null;
+      this.emit('render');
+    }
+
     toggleShiftTrace() {
       const st = this.shiftTrace;
       if (st.on) {
