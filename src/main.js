@@ -1294,9 +1294,18 @@
       const l = this._dl(); if (!l) return;
       const c = l.transformAt(this.frame);
       this.doStruct('Set transform keyframe', () => {
+        const prev = l.transform.keyframes.find(k => k.frame === this.frame);
         l.transform.keyframes = l.transform.keyframes.filter(k => k.frame !== this.frame);
-        l.transform.keyframes.push({ frame: this.frame, x: c.x, y: c.y, sx: c.sx, sy: c.sy, rot: c.rot });
+        const key = { frame: this.frame, x: c.x, y: c.y, sx: c.sx, sy: c.sy, rot: c.rot };
+        if (prev && prev.ease) key.ease = prev.ease;
+        l.transform.keyframes.push(key);
       });
+    }
+    // Easing for the segment leaving the layer's keyframe at `frame`.
+    setLayerKeyEase(layer, frame, ease) {
+      const k = layer && layer.transform.keyframes.find(k => k.frame === frame);
+      if (!k) { this.ui.status('No transform keyframe on this frame'); return; }
+      this.doStruct('Keyframe easing', () => { k.ease = ease; });
     }
     resetLayerTransform(layer) {
       if (!layer) return;
@@ -1404,12 +1413,21 @@
     }
     setCameraKey(frame, vals) {
       this.doStruct('Camera keyframe', () => {
+        const prev = this.project.camera.keyframes.find(k => k.frame === frame);
         this.project.camera.keyframes = this.project.camera.keyframes.filter(k => k.frame !== frame);
-        this.project.camera.keyframes.push({
+        const key = {
           frame, x: vals.x || 0, y: vals.y || 0,
           zoom: vals.zoom || 1, rot: vals.rot || 0
-        });
+        };
+        const ease = vals.ease || (prev && prev.ease);
+        if (ease) key.ease = ease;
+        this.project.camera.keyframes.push(key);
       });
+    }
+    setCameraKeyEase(frame, ease) {
+      const k = this.project.camera.keyframes.find(k => k.frame === frame);
+      if (!k) { this.ui.status('No camera keyframe on this frame'); return; }
+      this.doStruct('Camera keyframe easing', () => { k.ease = ease; });
     }
     clearCameraKeys() {
       if (!this.project.camera.keyframes.length) { this.ui.status('No camera keyframes'); return; }

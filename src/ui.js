@@ -1825,6 +1825,14 @@
       const y = el('input', { type: 'number', value: U.round(cur.y, 1), step: 10 });
       const zoom = el('input', { type: 'number', value: U.round(cur.zoom, 3), step: 0.1, min: 0.05 });
       const rot = el('input', { type: 'number', value: U.round(cur.rot, 1), step: 5 });
+      const easeSelect = (val) => {
+        const s = el('select');
+        U.EASES.forEach(([id, name]) => s.appendChild(el('option', { value: id, text: name })));
+        s.value = val || 'smooth';
+        return s;
+      };
+      const here = p.camera.keyframes.find(k => k.frame === a.frame);
+      const ease = easeSelect(here && here.ease);
       const list = el('div', { style: { maxHeight: '160px', overflow: 'auto', display: 'flex', flexDirection: 'column', gap: '4px' } });
       const refresh = () => {
         list.innerHTML = '';
@@ -1836,10 +1844,13 @@
             p.camera.keyframes = p.camera.keyframes.filter(kk => kk !== k);
             refresh(); a.emit('render');
           });
+          const kEase = easeSelect(k.ease);
+          kEase.title = 'Easing into the next keyframe';
+          kEase.addEventListener('change', () => { a.setCameraKeyEase(k.frame, kEase.value); refresh(); });
           list.appendChild(el('div', { class: 'field-row' }, [
             el('span', {}, ['Frame ' + (k.frame + 1) + ' — pos ' + U.round(k.x, 0) + ',' + U.round(k.y, 0) +
               '  zoom ' + U.round(k.zoom, 2) + '  rot ' + U.round(k.rot, 0) + '°']),
-            del
+            kEase, del
           ]));
         });
       };
@@ -1848,6 +1859,7 @@
         el('div', { class: 'chk-row', text: 'Keyframe for frame ' + (a.frame + 1) + ':' }),
         this._field('Pan X', x), this._field('Pan Y', y),
         this._field('Zoom', zoom), this._field('Rotation°', rot),
+        this._field('Easing', ease),
         el('div', { class: 'menu-sep' }),
         el('div', { class: 'chk-row', text: 'Keyframes:' }),
         list
@@ -1859,7 +1871,8 @@
             a.setCameraKey(a.frame, {
               x: parseFloat(x.value) || 0, y: parseFloat(y.value) || 0,
               zoom: Math.max(0.05, parseFloat(zoom.value) || 1),
-              rot: parseFloat(rot.value) || 0
+              rot: parseFloat(rot.value) || 0,
+              ease: ease.value
             });
             refresh();
             return false;

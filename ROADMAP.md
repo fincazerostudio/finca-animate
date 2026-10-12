@@ -37,8 +37,10 @@ Tracking parity with Toon Boom Harmony Advanced.
 - [x] Canvas resize after drawing (scale artwork or crop / extend)
 - [x] Drag the timeline ruler to set the project frame count
 - [x] Tool & view settings persist between sessions
+- [x] Keyframe easing presets (linear / smooth / ease in / ease out / hold)
 
 ## Next
+- [ ] Function-curve editor (Bezier easing per channel)
 - [ ] Bone rigging & mesh deformers
 - [ ] Node-based compositing view
 - [ ] Multiplane camera depth

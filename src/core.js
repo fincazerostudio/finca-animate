@@ -10,6 +10,21 @@ window.OT = window.OT || {};
     },
     clamp(v, a, b) { return v < a ? a : v > b ? b : v; },
     lerp(a, b, t) { return a + (b - a) * t; },
+    // Keyframe easing. A key's `ease` shapes the segment that leaves it, so
+    // keys saved before easing existed (no field) keep the old smoothstep.
+    EASES: [
+      ['linear', 'Linear'], ['smooth', 'Smooth'],
+      ['in', 'Ease In'], ['out', 'Ease Out'], ['hold', 'Hold']
+    ],
+    ease(t, kind) {
+      switch (kind) {
+        case 'linear': return t;
+        case 'in': return t * t * t;
+        case 'out': { const m = 1 - t; return 1 - m * m * m; }
+        case 'hold': return t < 1 ? 0 : 1;
+        default: return t * t * (3 - 2 * t);
+      }
+    },
     dist(x1, y1, x2, y2) { const dx = x2 - x1, dy = y2 - y1; return Math.sqrt(dx * dx + dy * dy); },
     round(v, p) { const m = Math.pow(10, p || 0); return Math.round(v * m) / m; },
     pad(n, w) { n = String(n); while (n.length < w) n = '0' + n; return n; },
@@ -245,7 +260,7 @@ window.OT = window.OT || {};
       this.cels = {};            // num -> Cel
       this.exposure = [];        // frameIndex -> cel num (0 = empty)
       this.nextNum = 1;
-      this.transform = { keyframes: [] };  // {frame,x,y,sx,sy,rot}
+      this.transform = { keyframes: [] };  // {frame,x,y,sx,sy,rot,ease?}
       // Folder support: parentId points to the containing 'group' layer (or
       // null = top level). Group layers themselves carry _collapsed for the
       // chevron toggle. Groups have no cels/exposure — they're purely
@@ -270,8 +285,7 @@ window.OT = window.OT || {};
       for (let i = 0; i < s.length - 1; i++) {
         const a = s[i], b = s[i + 1];
         if (f >= a.frame && f <= b.frame) {
-          let t = (f - a.frame) / (b.frame - a.frame);
-          t = t * t * (3 - 2 * t);
+          const t = U.ease((f - a.frame) / (b.frame - a.frame), a.ease);
           const A = N(a), B = N(b);
           return {
             x: A.x + (B.x - A.x) * t, y: A.y + (B.y - A.y) * t,
@@ -355,7 +369,7 @@ window.OT = window.OT || {};
       this.frameCount = opts.frameCount || 48;
       this.bg = opts.bg || '#ffffff';
       this.layers = [];
-      this.camera = { keyframes: [] };  // {frame,x,y,zoom,rot}
+      this.camera = { keyframes: [] };  // {frame,x,y,zoom,rot,ease?}
       if (!opts.empty) {
         this.layers.push(new Layer('Drawing 1', 'vector'));
       }
@@ -385,8 +399,7 @@ window.OT = window.OT || {};
       for (let i = 0; i < sorted.length - 1; i++) {
         const a = sorted[i], b = sorted[i + 1];
         if (f >= a.frame && f <= b.frame) {
-          let t = (f - a.frame) / (b.frame - a.frame);
-          t = t * t * (3 - 2 * t); // smoothstep ease
+          const t = U.ease((f - a.frame) / (b.frame - a.frame), a.ease);
           return {
             x: U.lerp(a.x || 0, b.x || 0, t),
             y: U.lerp(a.y || 0, b.y || 0, t),

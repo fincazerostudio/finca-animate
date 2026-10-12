@@ -48,6 +48,8 @@ per-user copy (see `BUILD.md`).
 - Transform tool with on-canvas handles
 - Smooth interpolation between keyframes — drawing, onion skin and
   export all stay transform-aware
+- Per-keyframe easing — Linear, Smooth, Ease In, Ease Out or Hold
+  (right-click a key in the timeline; camera keys in the Camera Editor)
 
 **Timeline / Xsheet**
 - Multi-layer timeline with exposure cells
