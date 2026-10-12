@@ -118,7 +118,7 @@
             el('div', { class: 'launcher-eyebrow brand-mono', text: 'Open · Source · Studio' }),
             el('div', {
               class: 'launcher-wordmark',
-              html: '<span class="open">Open</span><span class="toon">Toon</span>'
+              html: '<span class="open">Finca</span><span class="toon">Animate</span>'
             }),
             el('div', { class: 'launcher-tag', text: 'Frame by frame, the slow way.' })
           ])
@@ -159,7 +159,7 @@
         }, ['Skip · Continue with blank scene →'])
       ]);
 
-      this.root = el('div', { class: 'launcher', role: 'dialog', 'aria-label': 'OpenToon start' }, [
+      this.root = el('div', { class: 'launcher', role: 'dialog', 'aria-label': 'Finca Animate start' }, [
         el('div', { class: 'launcher-grain', 'aria-hidden': 'true' }),
         el('div', { class: 'launcher-stripe', 'aria-hidden': 'true' }),
         el('div', { class: 'launcher-frame' }, [header, main, footer])

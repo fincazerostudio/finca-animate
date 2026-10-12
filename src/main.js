@@ -296,7 +296,7 @@
         this._savePrefs();
       }, 20000);
       this._initialOpen();
-      this.ui.status('Welcome to OpenToon Studio - press B to start drawing');
+      this.ui.status('Welcome to Finca Animate - press B to start drawing');
     }
 
     // On launch: open a double-clicked .otoon if there is one; otherwise

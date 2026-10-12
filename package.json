@@ -1,7 +1,7 @@
 {
   "name": "opentoon",
-  "version": "1.0.45",
-  "description": "An open-source 2D animation studio for Windows and Linux, inspired by Toon Boom Harmony.",
+  "version": "1.1.0-beta.1",
+  "description": "Finca Animate: an open-source 2D animation studio for Linux and Windows, inspired by Toon Boom Harmony. Based on OpenToon Studio.",
   "main": "electron/main.js",
   "desktopName": "opentoon-studio.desktop",
   "scripts": {
@@ -14,7 +14,8 @@
     "test:electron": "node tests/electron-smoke.cjs",
     "test:render": "node tests/render-cli.cjs",
     "test:files": "node tests/phase0.cjs",
-    "test": "node tests/update-check.cjs && node tests/browsertest.cjs && node tests/vector.cjs && node tests/visual.cjs && node tests/pen.cjs && node tests/features2.cjs && node tests/easing.cjs && node tests/lighttable.cjs && node tests/transform.cjs && node tests/pegs.cjs && node tests/combined.cjs && node tests/quickwins.cjs && node tests/palettes.cjs && node tests/curves.cjs"
+    "test": "node tests/update-check.cjs && node tests/browsertest.cjs && node tests/vector.cjs && node tests/visual.cjs && node tests/pen.cjs && node tests/features2.cjs && node tests/easing.cjs && node tests/lighttable.cjs && node tests/transform.cjs && node tests/pegs.cjs && node tests/combined.cjs && node tests/quickwins.cjs && node tests/palettes.cjs && node tests/curves.cjs",
+    "publish:linux": "electron-builder --linux --publish always"
   },
   "keywords": [
     "animation",
@@ -22,7 +23,7 @@
     "toonboom",
     "opentoon"
   ],
-  "author": "OpenToon",
+  "author": "Finca Zero Studio",
   "license": "MIT",
   "type": "commonjs",
   "dependencies": {
@@ -34,8 +35,8 @@
     "playwright-core": "^1.60.0"
   },
   "build": {
-    "appId": "com.opentoon.studio",
-    "productName": "OpenToon Studio",
+    "appId": "com.fincazero.animate",
+    "productName": "Finca Animate",
     "files": [
       "index.html",
       "src/**/*",
@@ -68,17 +69,24 @@
             "x64"
           ]
         }
-      ]
+      ],
+      "artifactName": "Finca-Animate-Setup-${version}.${ext}"
     },
     "linux": {
       "icon": "assets/icons",
       "executableName": "opentoon-studio",
       "category": "Graphics",
-      "synopsis": "2D animation studio inspired by Toon Boom Harmony",
-      "artifactName": "OpenToon-Studio-${version}-${arch}.${ext}",
+      "synopsis": "2D animation studio inspired by Toon Boom Harmony (based on OpenToon)",
+      "artifactName": "Finca-Animate-${version}-${arch}.${ext}",
       "target": [
         {
           "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "tar.gz",
           "arch": [
             "x64"
           ]
@@ -92,8 +100,8 @@
     "fileAssociations": [
       {
         "ext": "otoon",
-        "name": "OpenToon Project",
-        "description": "OpenToon animation project",
+        "name": "Animation Project (.otoon)",
+        "description": "Finca Animate / OpenToon animation project",
         "icon": "assets/otoon-file.ico",
         "mimeType": "application/x-opentoon"
       }
@@ -110,7 +118,7 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "helliott20",
+        "owner": "fincazerostudio",
         "repo": "opentoon",
         "releaseType": "release"
       }

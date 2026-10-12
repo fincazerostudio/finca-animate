@@ -36,7 +36,7 @@ function createWindow() {
     minHeight: 600,
     show: false,                 // revealed once the renderer signals app:ready
     backgroundColor: '#14161a',
-    title: 'OpenToon Studio',
+    title: 'Finca Animate',
     autoHideMenuBar: true,
     icon: WINDOW_ICON,
     webPreferences: {
@@ -141,7 +141,7 @@ function createPenWindow(savedBounds) {
     width: bounds.width, height: bounds.height,
     minWidth: 480, minHeight: 360,
     backgroundColor: '#0c0d10',
-    title: 'OpenToon — Drawing Window',
+    title: 'Finca Animate — Drawing Window',
     autoHideMenuBar: true,
     icon: WINDOW_ICON,
     webPreferences: {
@@ -212,7 +212,7 @@ function createSplash() {
     movable: true,
     show: false,
     backgroundColor: '#00000000',
-    title: 'OpenToon',
+    title: 'Finca Animate',
     webPreferences: {
       preload: path.join(__dirname, 'splash-preload.js'),
       contextIsolation: true,
@@ -527,7 +527,7 @@ function setupIpc() {
     const r = await dialog.showSaveDialog(win, {
       title: 'Save Project',
       defaultPath: defaultPath || 'untitled.otoon',
-      filters: [{ name: 'OpenToon Project', extensions: ['otoon'] }]
+      filters: [{ name: 'Animation Project (.otoon)', extensions: ['otoon'] }]
     });
     if (r.canceled || !r.filePath) return null;
     const f = /\.otoon$/i.test(r.filePath) ? r.filePath : r.filePath + '.otoon';
@@ -538,7 +538,7 @@ function setupIpc() {
     const r = await dialog.showOpenDialog(win, {
       title: 'Open Project',
       properties: ['openFile'],
-      filters: [{ name: 'OpenToon Project', extensions: ['otoon'] }]
+      filters: [{ name: 'Animation Project (.otoon)', extensions: ['otoon'] }]
     });
     return (r.canceled || !r.filePaths.length) ? null : r.filePaths[0];
   });

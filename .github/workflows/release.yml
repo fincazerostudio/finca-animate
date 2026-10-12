@@ -1,32 +1,109 @@
 name: Release
 
-# Pushing a version tag (e.g. v1.0.3) builds the Windows installer and
-# publishes it to GitHub Releases, which the desktop app's OTA updater reads.
+# Pushing a version tag (e.g. v1.1.0-beta.1) runs the tests, builds Finca Animate
+# for Linux and Windows, and creates a DRAFT GitHub release with every file the
+# in-app updaters need (installers plus the *.yml update metadata and blockmaps).
+# Review the draft, then publish it; the updaters only see published releases.
 on:
   push:
     tags:
       - 'v*'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
-    runs-on: windows-latest
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
-      - name: Check out
-        uses: actions/checkout@v4
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Allow sandbox user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: App tests (headless Chrome)
+        run: xvfb-run -a npm test
 
-      - name: Install dependencies
-        run: npm ci
+  linux:
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Allow sandbox user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Build AppImage + tar.gz
+        run: npx electron-builder --linux --publish never
+      - name: Packaged-app tests
+        run: |
+          xvfb-run -a npm run test:electron
+          xvfb-run -a npm run test:render -- dist/linux-unpacked/opentoon-studio
+          xvfb-run -a npm run test:files -- dist/linux-unpacked/opentoon-studio
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux
+          path: |
+            dist/*.AppImage
+            dist/*.tar.gz
+            dist/latest*.yml
+            dist/beta*.yml
+            dist/alpha*.yml
+          if-no-files-found: error
 
-      - name: Build and publish to GitHub Releases
-        run: npm run publish
+  windows:
+    needs: test
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build installer
+        run: npx electron-builder --win --publish never
+      # The smoke test was written on Linux; on Windows it is reported, not blocking.
+      - name: Packaged-app smoke test (informational)
+        continue-on-error: true
+        run: node tests/electron-smoke.cjs "dist/win-unpacked/Finca Animate.exe"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows
+          path: |
+            dist/*.exe
+            dist/*.exe.blockmap
+            dist/latest*.yml
+            dist/beta*.yml
+            dist/alpha*.yml
+          if-no-files-found: error
+
+  draft-release:
+    needs: [linux, windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          path: out
+          merge-multiple: true
+      - name: Create draft release
         env:
-          # the runner's built-in token; no personal access token required
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          notes=".github/release-notes/${TAG}.md"
+          [ -f "$notes" ] || notes=/dev/null
+          ls -la out
+          gh release create "$TAG" out/* --draft --title "Finca Animate ${TAG#v}" --notes-file "$notes"

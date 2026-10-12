@@ -218,7 +218,7 @@
         ['Help', [
           { label: 'Keyboard Shortcuts…', fn: () => this.shortcutsDialog() },
           { label: 'Scripting Console…', fn: () => this.scriptConsole() },
-          { label: 'About OpenToon', fn: () => this.aboutDialog() }
+          { label: 'About Finca Animate', fn: () => this.aboutDialog() }
         ]]
       ];
     }
@@ -229,7 +229,7 @@
       // so it follows the .menu-title { color: var(--cream) } rule.
       // Clickable: returns to the project launcher (start screen).
       const brand = el('div', {
-        class: 'menu-title', 'aria-label': 'OpenToon — return to start',
+        class: 'menu-title', 'aria-label': 'Finca Animate — return to start',
         title: 'Return to start screen',
         role: 'button', tabindex: '0',
         html:
@@ -238,7 +238,7 @@
           '<circle cx="115" cy="100" r="68" stroke="#54B06A" stroke-width="17" stroke-linecap="round" opacity="0.55"/>' +
           '<circle cx="100" cy="100" r="68" stroke="currentColor" stroke-width="17" stroke-linecap="round"/>' +
           '</svg>' +
-          '<span class="menu-title-text"><span class="open">Open</span><span class="toon">Toon</span></span>'
+          '<span class="menu-title-text"><span class="open">Finca</span><span class="toon">Animate</span></span>'
       });
       brand.addEventListener('click', e => {
         e.stopPropagation();
@@ -2326,13 +2326,15 @@
       const status = el('div', { class: 'about-status' });
       const body = el('div', { class: 'about-body' }, [
         el('div', { html: mark }),
-        el('div', { class: 'brand-wordmark', html: '<span class="open">Open</span><span class="toon">Toon</span>' }),
+        el('div', { class: 'brand-wordmark', html: '<span class="open">Finca</span><span class="toon">Animate</span>' }),
         verLine,
         el('div', { class: 'about-sep' }),
         el('div', { class: 'about-blurb',
           html: 'An open-source 2D animation studio, inspired by Toon Boom Harmony.<br>Frame by frame, the slow way.' }),
         el('div', { class: 'about-link brand-mono',
-          html: 'MIT License · <a href="https://github.com/helliott20/opentoon" target="_blank" rel="noopener">github.com/helliott20/opentoon</a>' }),
+          html: 'Beta · MIT License · <a href="https://github.com/fincazerostudio/opentoon" target="_blank" rel="noopener">github.com/fincazerostudio/opentoon</a><br>' +
+            'Based on <a href="https://github.com/helliott20/opentoon" target="_blank" rel="noopener">OpenToon Studio</a> by helliott20 and contributors.<br>' +
+            'Built with AI coding assistance.' }),
         status
       ]);
       const buttons = [{ label: 'Close', primary: true }];
@@ -2369,7 +2371,7 @@
               ? 'Update ' + (s.version || '') + ' is available. Nothing has been downloaded.'
               : 'Update ' + (s.version || '') + ' found — downloading…',
             downloading: 'Downloading update… ' + (s.percent || 0) + '%',
-            downloaded: 'Update ready — restart OpenToon to install it.',
+            downloaded: 'Update ready — restart Finca Animate to install it.',
             uptodate: 'You have the latest version.',
             disabled: 'Updates are disabled in development mode.',
             error: 'Update check failed: ' + (s.message || 'offline')
@@ -2488,7 +2490,7 @@
           '</button>' +
         '</div>' +
         '<div class="update-card__body">' +
-          'A new version of <b>OpenToon</b> has been downloaded.<br>' +
+          'A new version of <b>Finca Animate</b> has been downloaded.<br>' +
           'Restart to finish installing.' +
         '</div>' +
         '<div class="update-card__foot">' +
@@ -2558,8 +2560,8 @@
         '<div class="update-card__body"></div>' +
         '<div class="update-card__foot"></div>';
       card.querySelector('.update-card__body').innerHTML = s.canDownload
-        ? 'A new version of <b>OpenToon</b> is available.<br>Nothing is downloaded until you choose to.'
-        : 'A new version of <b>OpenToon</b> is available.<br>' +
+        ? 'A new version of <b>Finca Animate</b> is available.<br>Nothing is downloaded until you choose to.'
+        : 'A new version of <b>Finca Animate</b> is available.<br>' +
           (s.hasPlatformBuild ? 'Download it from the release page.'
             : 'No ready-made build for this platform yet — see the release page.');
       const foot = card.querySelector('.update-card__foot');
@@ -2712,12 +2714,12 @@
       const pill = el('button', {
         class: 'update-pill brand-mono',
         type: 'button',
-        title: 'Restart to install the new version of OpenToon',
+        title: 'Restart to install the new version of Finca Animate',
         'aria-label': 'Update ready - click to restart'
       });
       const ready = this._updateCardMode !== 'available';
       if (!ready) {
-        pill.title = 'A new version of OpenToon is available';
+        pill.title = 'A new version of Finca Animate is available';
         pill.setAttribute('aria-label', 'Update available - click for details');
       }
       pill.innerHTML =
