@@ -147,10 +147,10 @@
         el('div', { class: 'launcher-foot__left brand-mono' }, [
           'BETA · MIT LICENSE · ',
           el('a', {
-            href: 'https://github.com/fincazerostudio/opentoon',
+            href: 'https://github.com/fincazerostudio/finca-animate',
             target: '_blank',
             rel: 'noopener',
-            text: 'github.com/fincazerostudio/opentoon'
+            text: 'github.com/fincazerostudio/finca-animate'
           }),
           ' · BASED ON ',
           el('a', {

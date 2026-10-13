@@ -2332,7 +2332,7 @@
         el('div', { class: 'about-blurb',
           html: 'An open-source 2D animation studio, inspired by Toon Boom Harmony.<br>Frame by frame, the slow way.' }),
         el('div', { class: 'about-link brand-mono',
-          html: 'Beta · MIT License · <a href="https://github.com/fincazerostudio/opentoon" target="_blank" rel="noopener">github.com/fincazerostudio/opentoon</a><br>' +
+          html: 'Beta · MIT License · <a href="https://github.com/fincazerostudio/finca-animate" target="_blank" rel="noopener">github.com/fincazerostudio/finca-animate</a><br>' +
             'Based on <a href="https://github.com/helliott20/opentoon" target="_blank" rel="noopener">OpenToon Studio</a> by helliott20 and contributors.<br>' +
             'Built with AI coding assistance.' }),
         status
