@@ -183,6 +183,7 @@
           { sep: 1 },
           { label: 'New Drawing', fn: () => a.newDrawing() },
           { label: 'Duplicate Drawing', fn: () => a.duplicateDrawing() },
+          { label: 'Drawing Substitution…', fn: () => this.drawingSubstitution() },
           { label: 'Extend Frame', fn: () => a.extendExposure() },
           { label: 'Clear Frame', fn: () => a.clearExposure() },
           { sep: 1 },
@@ -2262,12 +2263,63 @@
         }
       ]);
     }
+    drawingSubstitution() {
+      const a = this.app, layer = a._dl();
+      if (!layer) return;
+      if (layer.locked) { this.status('Layer is locked'); return; }
+      a.tools.flush();
+      const frame = a.frame;
+      let selected = layer.exposure[frame] || 0;
+      const grid = el('div', { class: 'drawing-picker', role: 'group', 'aria-label': 'Available drawings' });
+      const scope = el('select', { id: 'drawing-substitution-scope', 'aria-label': 'Apply to' }, [
+        el('option', { value: 'frame', text: 'Current frame only' }),
+        el('option', { value: 'held', text: 'From current frame to end of held exposure' })
+      ]);
+      const add = (num, cel) => {
+        const button = el('button', {
+          type: 'button', class: 'drawing-choice', 'data-drawing': num,
+          'aria-pressed': String(selected === num),
+          'aria-label': num ? 'Drawing ' + num : 'Empty frame'
+        });
+        if (cel) {
+          const canvas = el('canvas', { width: 96, height: 54, 'aria-hidden': 'true' });
+          const scale = Math.min(96 / cel.w, 54 / cel.h);
+          canvas.getContext('2d').drawImage(cel.canvas,
+            (96 - cel.w * scale) / 2, (54 - cel.h * scale) / 2, cel.w * scale, cel.h * scale);
+          button.appendChild(canvas);
+        } else button.appendChild(el('span', { class: 'drawing-empty', text: '∅', 'aria-hidden': 'true' }));
+        button.appendChild(el('span', { text: num ? 'Drawing ' + num : 'Empty frame' }));
+        button.addEventListener('click', () => {
+          selected = num;
+          grid.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b === button)));
+        });
+        grid.appendChild(button);
+      };
+      add(0, null);
+      Object.keys(layer.cels).map(Number).sort((x, y) => x - y).forEach(num => add(num, layer.cels[num]));
+      const body = el('div', { class: 'drawing-substitution' }, [
+        el('p', { text: layer.name + ' · Frame ' + (frame + 1) }),
+        el('p', { text: 'Reuse a drawing on this layer. Editing it updates every frame that uses it.' }),
+        grid,
+        el('label', { for: 'drawing-substitution-scope', text: 'Apply to' }), scope,
+        el('p', { class: 'drawing-picker-note', text: 'Held exposure stops at the next drawing or empty frame. In a gap, only the current frame changes.' })
+      ]);
+      this.modal('Drawing Substitution', body, [
+        { label: 'Apply', primary: true, fn: () => {
+          if (a.activeLayer() !== layer || a.frame !== frame) {
+            this.status('Layer or frame changed; reopen Drawing Substitution'); return;
+          }
+          a.substituteDrawing(selected, scope.value);
+        } },
+        { label: 'Cancel' }
+      ]);
+    }
     // A small JavaScript console for automating the app (`app` / `OT` in scope).
     scriptConsole() {
       const a = this.app;
       let last = '';
       try { last = localStorage.getItem('opentoon.script') || ''; } catch (e) { /* ignore */ }
-      const input = el('textarea', { spellcheck: 'false' });
+      const input = el('textarea', { spellcheck: 'false', 'aria-label': 'JavaScript source' });
       input.value = last ||
         '// `app` and `OT` are in scope. Use return to show a value.\n' +
         '// e.g. add a layer:  app.addLayer(\'vector\')\n' +

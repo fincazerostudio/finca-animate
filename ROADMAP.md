@@ -44,9 +44,9 @@ costs a week.
 
 ## Phase 2 — Character rigging *(builds on pegs, pivots and curves)*
 
-- [ ] **Drawing substitution + library.** Swap drawings on a layer from a
-      picker (mouths, hands, eyes); a library of reusable drawings, rigs and
-      templates.
+- [x] **Drawing substitution.** Thumbnail picker for existing drawings on
+      a layer, current-frame or remaining-held-exposure replacement, undo/redo.
+- [ ] **Library.** Reusable drawings, rigs and templates across projects.
 - [ ] **Lip-sync.** Detect phonemes in the soundtrack, map them to mouth
       drawings via substitution, editable in the timeline.
 - [ ] **Deformers.** Bone and curve deformers that bend a drawing, with IK
@@ -118,6 +118,7 @@ costs a week.
 - [x] Licence notices shipped with builds
 
 **Desktop**
+- [x] Basic JavaScript scripting console (Help menu; `app` and `OT` in scope)
 - [x] Electron app with updates (Windows: automatic; Linux: approval-based,
       per-user install / rollback)
 - [x] Pen-display drawing window; settings persist between sessions

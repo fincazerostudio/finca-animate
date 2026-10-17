@@ -1731,3 +1731,16 @@ body.clean-view #viewbar{display:none;}
   .launcher-head{flex-direction:column;align-items:flex-start;gap:18px;}
   .launcher-meta{align-items:flex-start;text-align:left;}
 }
+
+/* Existing cels remain available even when no frame currently exposes them. */
+.drawing-substitution{width: min(540px, calc(100vw - 80px));display:flex;flex-direction:column;gap:10px;}
+.drawing-substitution p{margin:0;line-height:1.5;}
+.drawing-picker{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;max-height:280px;overflow:auto;padding:3px;}
+.drawing-choice{display:flex;flex-direction:column;align-items:center;gap:6px;padding:8px;background:var(--panel3);color:var(--text);border:2px solid transparent;border-radius:4px;cursor:pointer;}
+.drawing-choice[aria-pressed="true"]{border-color:var(--ok);}
+.drawing-choice:focus-visible{outline:2px solid var(--cream);outline-offset:1px;}
+.drawing-choice canvas,.drawing-empty{width:96px;height:54px;background:repeating-conic-gradient(#fff2 0% 25%,transparent 0% 50%) 0 / 12px 12px;}
+.drawing-empty{display:grid;place-items:center;font-size:28px;}
+.drawing-picker-note{color:var(--text-dim);font-size:12px;}
+
+.drawing-substitution select{background:var(--panel3);color:var(--text);border:1px solid var(--edge);border-radius:3px;padding:6px;}

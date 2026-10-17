@@ -166,3 +166,42 @@ multiplane depth, particle effects, lip-sync).
 ## License
 
 MIT.
+
+## Drawing substitution
+
+Choose **Animation → Drawing Substitution…** to see thumbnails of every
+existing drawing on the active vector or bitmap layer, including drawings
+that are no longer exposed. Pick a drawing (or **Empty frame**), choose
+**Current frame only** or **From current frame to end of held exposure**,
+then **Apply**. Held replacement starts at the playhead and stops at the
+next different drawing or gap; an empty frame changes only at the playhead.
+Locked layers cannot be substituted. Undo and redo restore the exposures.
+
+Substitution reuses the original drawing: editing it changes every frame
+that references it. The drawing choices and exposure changes are saved in
+the existing `.otoon` format. A cross-project drawing/rig library remains
+planned.
+
+## Basic scripting console
+
+Open **Help → Scripting Console…**, enter JavaScript and click **Run**
+(or press **Ctrl+Enter**, **Cmd+Enter** on macOS). `app` and `OT` are in
+scope; use `return` to display a result. The last run script is remembered.
+For example:
+
+```js
+app.addLayer('vector');
+return app.project.layers.length;
+```
+
+Use app commands to keep their normal undo support. Direct model mutations
+are not automatically undoable. Frame indexes are zero-based:
+
+```js
+app.setFrame(5);             // Frame 6 in the timeline
+app.substituteDrawing(1);    // Reuse drawing 1 on this frame
+return app.activeLayer().exposure;
+```
+
+This is the existing app scripting interface; a stable, versioned API is
+still planned.
