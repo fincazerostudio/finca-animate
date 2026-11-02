@@ -27,10 +27,15 @@ costs a week.
 
 ## Phase 1 — Scale and output *(before relying on it for long shots)*
 
-- [ ] **Memory per drawing.** Every cel allocates a full-resolution canvas
-      (≈8 MB at 1080p), even vector cels. Rasterise vector cels on demand and
-      evict caches for frames far from the playhead, so hundreds of drawings
-      fit in normal RAM.
+- [x] **Memory per drawing (vector).** Cels allocate their full-resolution
+      surface (≈8 MB at 1080p) only when it is first used; vector drawings
+      rasterise from their strokes on demand, and cached vector surfaces are
+      kept under a budget (default 1 GB, `settings.celMemoryMB`), releasing
+      the ones furthest from the playhead first. Opening a 300-drawing
+      1080p vector scene went from ≈2.4 GB of surfaces to none.
+- [ ] **Memory per drawing (raster).** Raster surfaces hold the only copy of
+      the pixels, so they stay resident. Next: keep far-away raster cels
+      compressed (PNG in memory) and decode them ahead of the playhead.
 - [ ] **Project format v2.** One JSON file with base64 images is loaded and
       saved whole. Move to a container (zip/folder) with one file per cel,
       saving only what changed; keep reading v1 files.

@@ -253,6 +253,7 @@
       this.colorPanel = new OT.ColorPanel(this, document.getElementById('colorpanel'));
       this.timeline = new OT.Timeline(this);
       this.penCast = new OT.PenCast(this);   // secondary pen-display window
+      this.celMemory = OT.CelMemory.attach(this);   // vector-cel surface budget
 
       this._installKeys();
       this._installGuards();
