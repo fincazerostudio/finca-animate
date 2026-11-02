@@ -1,6 +1,6 @@
 {
   "name": "opentoon",
-  "version": "1.1.0-beta.1",
+  "version": "1.1.0-beta.2",
   "description": "Finca Animate: an open-source 2D animation studio for Linux and Windows, inspired by Toon Boom Harmony. Based on OpenToon Studio.",
   "main": "electron/main.js",
   "desktopName": "opentoon-studio.desktop",
