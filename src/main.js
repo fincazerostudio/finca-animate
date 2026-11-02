@@ -253,6 +253,7 @@
       this.colorPanel = new OT.ColorPanel(this, document.getElementById('colorpanel'));
       this.timeline = new OT.Timeline(this);
       this.penCast = new OT.PenCast(this);   // secondary pen-display window
+      this.celMemory = OT.CelMemory.attach(this);   // vector-cel surface budget
 
       this._installKeys();
       this._installGuards();
@@ -831,6 +832,31 @@
         l.exposure[f] = num;
       });
       this.setFrame(this.frame + 1);
+    }
+    // Reuse a cel by changing exposure references, never copying its artwork.
+    // "held" starts at the playhead and stops at the next exposure change.
+    substituteDrawing(num, scope = 'frame') {
+      const l = this._dl();
+      if (!l) return false;
+      if (l.locked) { this.ui.status('Layer is locked'); return false; }
+      if (!Number.isInteger(num) || num < 0 || (num !== 0 && !Object.prototype.hasOwnProperty.call(l.cels, num))) {
+        this.ui.status('Choose an existing drawing on this layer'); return false;
+      }
+      if (scope !== 'frame' && scope !== 'held') {
+        this.ui.status('Choose a frame or held exposure'); return false;
+      }
+      if (this.tools) this.tools.flush();
+      const frame = this.frame, old = l.exposure[frame] || 0;
+      if (old === num) return false;
+      let end = frame + 1;
+      // Empty frames do not form a held drawing: fill only the current gap slot.
+      if (scope === 'held' && old) {
+        while (end < this.project.frameCount && l.exposure[end] === old) end++;
+      }
+      this.doStruct('Substitute drawing', () => {
+        for (let f = frame; f < end; f++) l.exposure[f] = num;
+      });
+      return true;
     }
     clearExposure() {
       const l = this._dl(); if (!l) return;
@@ -2285,6 +2311,8 @@
         if (!dragged) this.playback.toggle();
       });
       window.addEventListener('keydown', ev => {
+        // Modal controls own the keyboard, even after a clicked button blurs.
+        if (document.querySelector('#modal-root .modal-bg')) return;
         const t = ev.target;
         if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
         const k = ev.key.toLowerCase();
