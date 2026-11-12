@@ -160,19 +160,61 @@ window.OT = window.OT || {};
      (playback, drawing, a big save) each call can wait about a second.
      OffscreenCanvas.convertToBlob() is not tied to idle time, so drawings
      are encoded through a snapshot of the canvas instead. Same PNG pixels. */
-  function encodePNG(canvas) {
+  function toCanvas(src) {
+    if (!(typeof ImageData !== 'undefined' && src instanceof ImageData)) return src;
+    const c = document.createElement('canvas');
+    c.width = src.width; c.height = src.height;
+    c.getContext('2d').putImageData(src, 0, 0);
+    return c;
+  }
+  // src: a canvas or an ImageData (straight alpha)
+  function encodePNG(src) {
+    const viaToBlob = () => new Promise(res => toCanvas(src).toBlob(res, 'image/png'));
     if (typeof OffscreenCanvas === 'function' && typeof createImageBitmap === 'function') {
-      return createImageBitmap(canvas, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' }).then(bmp => {
+      return createImageBitmap(src, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' }).then(bmp => {
         const oc = new OffscreenCanvas(bmp.width, bmp.height);
         const x = oc.getContext('bitmaprenderer');
         if (!x) { bmp.close(); throw new Error('no bitmaprenderer'); }
         x.transferFromImageBitmap(bmp);
         return oc.convertToBlob({ type: 'image/png' });
-      }).catch(() => new Promise(res => canvas.toBlob(res, 'image/png')));
+      }).catch(viaToBlob);
     }
-    return new Promise(res => canvas.toBlob(res, 'image/png'));
+    return viaToBlob();
   }
   OT.encodePNG = encodePNG;
+
+  /* A drawing is stored cropped to the area that was drawn on: most
+     drawings cover a small part of the frame, and decoding, encoding, file
+     size and memory all scale with the stored area.
+     Resolves { bytes: Uint8Array, x, y } or { empty: true }. */
+  function encodeCropped(canvas) {
+    const w = canvas.width, h = canvas.height;
+    const img = canvas.getContext('2d').getImageData(0, 0, w, h);
+    const px = new Uint32Array(img.data.buffer);
+    let top = -1, bottom = -1, left = w, right = -1;
+    for (let y = 0; y < h; y++) {
+      const row = y * w;
+      let first = -1;
+      for (let x = 0; x < w; x++) if (px[row + x]) { first = x; break; }
+      if (first < 0) continue;
+      if (top < 0) top = y;
+      bottom = y;
+      if (first < left) left = first;
+      for (let x = w - 1; x > right; x--) if (px[row + x]) { right = x; break; }
+    }
+    if (top < 0) return Promise.resolve({ empty: true });
+    const bw = right - left + 1, bh = bottom - top + 1;
+    let sub = img;
+    if (bw !== w || bh !== h) {
+      const out = new Uint8ClampedArray(bw * bh * 4);
+      for (let y = 0; y < bh; y++)
+        out.set(img.data.subarray(((top + y) * w + left) * 4, ((top + y) * w + left + bw) * 4), y * bw * 4);
+      sub = new ImageData(out, bw, bh);
+    }
+    return encodePNG(sub).then(b => b.arrayBuffer())
+      .then(buf => ({ bytes: new Uint8Array(buf), x: left, y: top }));
+  }
+  OT.encodeCropped = encodeCropped;
 
   /* ============================== Cel ============================== */
   // A Cel is a single drawing (raster surface) belonging to a layer.
@@ -202,7 +244,9 @@ window.OT = window.OT || {};
       // Vector cels use _file too, to say which entry holds their strokes.
       this._stamp = 0;
       this._png = null; this._pngStamp = -1;
+      this._pngAt = null;               // where _png goes on the surface ({x, y}; null = 0,0 full size)
       this._file = null; this._fileStamp = -1;
+      this._blankStamp = -1;            // the surface was found empty at this stamp
       this._loading = null;             // background decode in flight
       // No `willReadFrequently` — the hint forces a CPU-side backing store,
       // which means every `drawImage(cel.canvas, …)` from the composite
@@ -233,7 +277,7 @@ window.OT = window.OT || {};
       this._canvas = c || null;
       this._ctx = c ? c.getContext('2d') : null;
       // a replaced surface is a different drawing: forget the stored copies
-      if (this.kind !== 'vector') { this._png = null; this._file = null; this._stamp++; }
+      if (this.kind !== 'vector') { this._png = null; this._pngAt = null; this._file = null; this._stamp++; }
     }
     get ctx() {
       if (!this._ctx) this._alloc();
@@ -250,7 +294,8 @@ window.OT = window.OT || {};
     get parkable() {
       if (this.kind === 'vector') return true;
       if (!this._canvas) return true;
-      return (!!this._png && this._pngStamp === this._stamp) || (!!this._file && this._fileStamp === this._stamp);
+      return (!!this._png && this._pngStamp === this._stamp) || (!!this._file && this._fileStamp === this._stamp) ||
+        this._blankStamp === this._stamp;
     }
     // True when the full-resolution surface currently exists in memory.
     get hasCanvas() { return !!this._canvas; }
@@ -275,6 +320,13 @@ window.OT = window.OT || {};
       if (this._png) return this._png;
       return (this._file && OT.IO && OT.IO.readEntrySync) ? OT.IO.readEntrySync(this._file) : null;
     }
+    // Where the stored (cropped) copy goes on the surface; null = a full-size
+    // image at 0,0 (older files, other tools).
+    _storedAt() {
+      if (this._png) return this._pngAt;
+      const f = this._file;
+      return f && f.x != null ? { x: f.x | 0, y: f.y | 0 } : null;
+    }
     // Safety net: something needs the pixels right now and the background
     // load (load()) has not happened. Decode on the spot so no caller can
     // ever read a blank surface for a drawing that exists.
@@ -282,12 +334,13 @@ window.OT = window.OT || {};
       try {
         const bytes = this._storedBytes();
         if (!bytes) throw new Error('its data could not be read from the project file');
+        const at = this._storedAt();
         const img = OT.PNGSync.decode(bytes);
-        if (img.width !== this._canvas.width || img.height !== this._canvas.height) {
+        if (!at && (img.width !== this._canvas.width || img.height !== this._canvas.height)) {
           this.w = img.width; this.h = img.height;
           this._canvas.width = img.width; this._canvas.height = img.height;
         }
-        this._ctx.putImageData(new ImageData(img.data, img.width, img.height), 0, 0);
+        this._ctx.putImageData(new ImageData(img.data, img.width, img.height), at ? at.x : 0, at ? at.y : 0);
         Cel.stats.syncDecodes++;
       } catch (e) {
         Cel.stats.failed++;
@@ -299,6 +352,7 @@ window.OT = window.OT || {};
     load() {
       if (!this.parked) return Promise.resolve(this);
       if (this._loading) return this._loading;
+      const at = this._storedAt();
       const bytes = this._png ? Promise.resolve(this._png)
         : (OT.IO && OT.IO.readEntry ? OT.IO.readEntry(this._file) : Promise.resolve(null));
       this._loading = bytes
@@ -308,10 +362,10 @@ window.OT = window.OT || {};
           if (!bmp) return this;                      // unreadable: _decodeNow reports it on access
           if (this.parked) {                          // not loaded or cleared in the meantime
             const c = document.createElement('canvas');
-            c.width = bmp.width; c.height = bmp.height;
-            this.w = bmp.width; this.h = bmp.height;
+            if (!at) { this.w = bmp.width; this.h = bmp.height; }
+            c.width = this.w; c.height = this.h;
             const x = c.getContext('2d');
-            x.drawImage(bmp, 0, 0);
+            x.drawImage(bmp, at ? at.x : 0, at ? at.y : 0);
             this._canvas = c; this._ctx = x;
             this._used = ++_celClock;
             Cel.stats.loads++;
@@ -329,12 +383,12 @@ window.OT = window.OT || {};
       if (this.parkable) return Promise.resolve(true);
       if (this._stashing) return this._stashing;
       const stamp = this._stamp, cv = this._canvas;
-      this._stashing = encodePNG(cv)
-        .then(b => b.arrayBuffer())
-        .then(buf => {
+      this._stashing = encodeCropped(cv)
+        .then(r => {
           this._stashing = null;
           if (this._stamp !== stamp || this._canvas !== cv) return false;   // drawn on meanwhile
-          this._png = new Uint8Array(buf); this._pngStamp = stamp;
+          if (r.empty) { this._png = null; this._pngAt = null; this._file = null; this._blankStamp = stamp; }
+          else { this._png = r.bytes; this._pngAt = { x: r.x, y: r.y }; this._pngStamp = stamp; }
           Cel.stats.encodes++;
           return true;
         }, () => { this._stashing = null; return false; });
@@ -375,6 +429,7 @@ window.OT = window.OT || {};
     // stroke on top", use appendStroke() instead — that's O(1).
     rebuild() {
       if (this.kind !== 'vector' || !OT.Vector) return;
+      this._stamp++;                    // the strokes changed: saves look at it again
       // no surface yet: it is rasterised from the strokes on first access
       if (!this._canvas) { this.dirty(); return; }
       OT.Vector.renderCel(this);
@@ -420,7 +475,7 @@ window.OT = window.OT || {};
     }
     clear() {
       if (this.kind === 'vector') { this.strokes = []; this.eraserMarks = []; }
-      else { this._png = null; this._file = null; }   // blank now: nothing stored to bring back
+      else { this._png = null; this._pngAt = null; this._file = null; }   // blank now: nothing stored to bring back
       if (this._ctx) this._ctx.clearRect(0, 0, this.w, this.h);
       this.dirty();
     }
@@ -486,11 +541,11 @@ window.OT = window.OT || {};
     }
     _loadThumb(tw, th) {
       if (this._thumbLoading) return;
-      const rev = this._rev;
+      const rev = this._rev, at = this._storedAt(), W = this.w, H = this.h;
       const bytes = this._png ? Promise.resolve(this._png)
         : (OT.IO && OT.IO.readEntry ? OT.IO.readEntry(this._file) : Promise.resolve(null));
       this._thumbLoading = bytes
-        .then(b => b ? createImageBitmap(new Blob([b], { type: 'image/png' }),
+        .then(b => b ? createImageBitmap(new Blob([b], { type: 'image/png' }), at ? { colorSpaceConversion: 'none' } :
           { resizeWidth: tw, resizeHeight: th, resizeQuality: 'high', colorSpaceConversion: 'none' }) : null)
         .then(bmp => {
           this._thumbLoading = null;
@@ -498,7 +553,9 @@ window.OT = window.OT || {};
           if (this._rev === rev && this.thumb && this.thumb.width === tw && this.thumb.height === th) {
             const x = this.thumb.getContext('2d');
             x.clearRect(0, 0, tw, th);
-            x.drawImage(bmp, 0, 0, tw, th);
+            x.imageSmoothingQuality = 'high';
+            if (at) x.drawImage(bmp, at.x * tw / W, at.y * th / H, bmp.width * tw / W, bmp.height * th / H);
+            else x.drawImage(bmp, 0, 0, tw, th);
             this.thumbDirty = false;
             if (Cel.onLoad) Cel.onLoad(this);
           }

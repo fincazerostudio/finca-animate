@@ -309,7 +309,7 @@
           // unless something was edited in the meantime.)
           const desktop = !!(window.OpenToonDesktop && window.OpenToonDesktop.fs);
           if (this.projectPath && OT.IO.writeProjectTo) {
-            OT.IO.writeProjectTo(this, this.projectPath)
+            OT.IO.writeProjectTo(this, this.projectPath, { background: true })
               .catch(() => { OT.IO.autosave(this); });
           } else if (OT.IO.autosave(this) && !desktop) {
             this.dirty = false;

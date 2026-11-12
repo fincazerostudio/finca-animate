@@ -534,7 +534,10 @@
     for (const c of strays) {
       if (c.kind !== 'vector' && c.parked && !c._png) {
         const bytes = await readEntry(c._file);
-        if (bytes && c.parked && !c._png) { c._png = bytes; c._pngStamp = c._stamp; }
+        if (bytes && c.parked && !c._png) {
+          c._png = bytes; c._pngStamp = c._stamp;
+          c._pngAt = c._file.x != null ? { x: c._file.x | 0, y: c._file.y | 0 } : null;
+        }
       }
       c._file = null;
     }
@@ -551,7 +554,7 @@
      slot 'file'  : saving the project file (cels then point into it)
      slot 'auto'  : crash-recovery autosave (cels keep pointing at their own file)
      slot 'bytes' : every entry as bytes (browser download)                  */
-  async function buildFinca(app, slot, autoId) {
+  async function buildFinca(app, slot, autoId, trust) {
     const p = app.project;
     const entries = [], names = new Set(), jobs = [], commits = [], inScene = new Set();
     let encoded = 0;
@@ -567,13 +570,29 @@
         const auto = slot === 'auto' && c._auto && c._auto.id === autoId && liveSource(autoId) ? c._auto : null;
         const fileOk = c._file && liveSource(c._file.id);
         if (c.kind === 'vector') {
-          const text = JSON.stringify({ strokes: c.strokes || [], eraserMarks: c.eraserMarks || [] });
-          const name = dir + safeName(num) + '-' + hashString(text) + '.json';
+          // Every stroke edit ends in rebuild() / appendStroke() / dirty(),
+          // which move the stamp; background saves trust it and skip the
+          // drawings that did not move. Other saves (Ctrl+S, Save As, closing)
+          // look at every drawing's strokes again.
+          const k = c._vec, ml = (c.eraserMarks || []).length;
+          const same = trust && k && k.stamp === c._stamp && k.strokes === c.strokes && k.sl === c.strokes.length &&
+            k.marks === c.eraserMarks && k.ml === ml;
+          let text = null, name;
+          if (same) name = k.name;
+          else {
+            text = JSON.stringify({ strokes: c.strokes || [], eraserMarks: c.eraserMarks || [] });
+            name = dir + safeName(num) + '-' + hashString(text) + '.json';
+          }
           ref.src = name;
           if (auto && auto.name === name) put({ name, from: { id: autoId, name } });
           else if (fileOk && c._file.name === name) put({ name, from: c._file });
-          else { put({ name, text }); encoded++; }
+          else {
+            if (text == null) text = JSON.stringify({ strokes: c.strokes || [], eraserMarks: c.eraserMarks || [] });
+            put({ name, text }); encoded++;
+          }
+          const vec = { stamp: c._stamp, strokes: c.strokes, sl: c.strokes.length, marks: c.eraserMarks, ml, name };
           commits.push(id => {
+            c._vec = vec;
             if (slot === 'file') { if (!c._file) trackCel(c); c._file = { id, name }; }
             else if (slot === 'auto') c._auto = { id, name };
           });
@@ -582,49 +601,58 @@
         if (!c._canvas && !c._png && !c._file) continue;          // never drawn on: nothing to store
         // Which stored copy (if any) is exactly this drawing right now?
         // Parked: _png when there is one, else the file. In memory: whichever
-        // carries the current stamp.
+        // carries the current stamp. Stored copies are cropped to the drawn
+        // area; x / y say where they go (absent = full size at 0,0).
         const resident = !!c._canvas, stamp = c._stamp;
+        const at = o => { if (o && o.x != null) { ref.x = o.x | 0; ref.y = o.y | 0; } };
         const usePng = !!c._png && (!resident || c._pngStamp === stamp);
         const useFile = !usePng && fileOk && (resident ? c._fileStamp === stamp : true);
-        if (auto && auto.stamp === stamp) {
-          ref.src = auto.name;
+        if (resident && c._blankStamp === stamp) {
+          // empty drawing: nothing to store
+        } else if (auto && auto.stamp === stamp) {
+          ref.src = auto.name; at(auto);
           put({ name: auto.name, from: { id: autoId, name: auto.name } });
         } else if (useFile) {
-          const name = c._file.name;
-          ref.src = name;
-          put({ name, from: c._file });
+          const f = c._file, name = f.name;
+          ref.src = name; at(f);
+          put({ name, from: f });
           commits.push(id => {
-            if (slot === 'file') { c._file = { id, name }; if (!c._canvas) c._fileStamp = c._stamp; }
-            else if (slot === 'auto') c._auto = { id, name, stamp };
+            if (slot === 'file') { c._file = Object.assign({}, f, { id }); if (!c._canvas) c._fileStamp = c._stamp; }
+            else if (slot === 'auto') c._auto = Object.assign({ stamp }, f, { id });
           });
         } else if (usePng) {
-          const bytes = c._png;
+          const bytes = c._png, pos = c._pngAt;
           const name = dir + safeName(num) + '-' + hashBytes(bytes) + '.png';
-          ref.src = name;
+          ref.src = name; at(pos);
           put({ name, data: bytes });
           commits.push(id => {
+            const loc = Object.assign({ id, name }, pos || {});
             if (slot === 'file') {
               if (!c._file) trackCel(c);
-              c._file = { id, name };
+              c._file = loc;
               c._fileStamp = c._canvas ? stamp : c._stamp;
-              if (c._png === bytes) c._png = null;                 // the file holds it now
-            } else if (slot === 'auto') c._auto = { id, name, stamp };
+              if (c._png === bytes) { c._png = null; c._pngAt = null; }   // the file holds it now
+            } else if (slot === 'auto') c._auto = Object.assign({ stamp }, loc);
           });
         } else {
-          // changed (or never saved): encode it now, off the main thread
+          // changed (or never saved): encode it now, cropped, off the main thread
           jobs.push(async () => {
-            const cv = c.canvas, st = c._stamp;
-            const blob = await canvasToBlob(cv);
-            const bytes = new Uint8Array(await blob.arrayBuffer());
-            const name = dir + safeName(num) + '-' + hashBytes(bytes) + '.png';
-            ref.src = name;
-            put({ name, data: bytes });
+            const st = c._stamp;
+            const r = await OT.encodeCropped(c.canvas);
+            if (r.empty) {
+              commits.push(() => { if (slot === 'file') { c._file = null; c._blankStamp = st; } });
+              return;
+            }
+            const name = dir + safeName(num) + '-' + hashBytes(r.bytes) + '.png';
+            ref.src = name; ref.x = r.x; ref.y = r.y;
+            put({ name, data: r.bytes });
             encoded++;
             commits.push(id => {
+              const loc = { id, name, x: r.x, y: r.y };
               if (slot === 'file') {
                 if (!c._file) trackCel(c);
-                c._file = { id, name }; c._fileStamp = st;
-              } else if (slot === 'auto') c._auto = { id, name, stamp: st };
+                c._file = loc; c._fileStamp = st;
+              } else if (slot === 'auto') c._auto = Object.assign({ stamp: st }, loc);
             });
           });
         }
@@ -699,7 +727,7 @@
     const auto = !!(target && target.autosave);
     const t0 = performance.now();
     const seq = app._dirtySeq;
-    const b = await buildFinca(app, auto ? 'auto' : 'file', autosaveId);
+    const b = await buildFinca(app, auto ? 'auto' : 'file', autosaveId, !!(auto || (opts && opts.background)));
     let r;
     {
       if (!auto && opts && opts.thumbnail) {
@@ -777,7 +805,7 @@
       for (const num in (ld.cels || {})) {
         const cd = ld.cels[num] || {};
         const cel = new OT.Cel(Number(num), cd.w || p.width, cd.h || p.height, isVec ? 'vector' : 'raster');
-        if (cd.src) (isVec ? vec : ras).push([cel, cd.src]);
+        if (cd.src) (isVec ? vec : ras).push([cel, cd.src, cd]);
         layer.cels[num] = cel;
       }
       p.layers.push(layer);
@@ -794,6 +822,8 @@
           if (!detach) { cel._file = { id, name }; trackCel(cel); }
         } catch (e) { console.error('Drawing ' + name + ' could not be read'); }
         cel.dirty();
+        if (!detach && cel._file) cel._vec = { stamp: cel._stamp, strokes: cel.strokes, sl: cel.strokes.length,
+          marks: cel.eraserMarks, ml: cel.eraserMarks.length, name };
       });
     }
     // raster drawings stay where they are until they are needed
@@ -801,10 +831,16 @@
       for (let i = 0; i < ras.length; i += 64) {
         const part = ras.slice(i, i + 64);
         const got = await readEntries(id, part.map(r => r[1]));
-        part.forEach(([cel], k) => { if (got[k]) { cel._png = got[k]; cel._pngStamp = cel._stamp; } cel.dirty(); });
+        part.forEach(([cel, , cd], k) => {
+          if (got[k]) { cel._png = got[k]; cel._pngAt = cd.x != null ? { x: cd.x | 0, y: cd.y | 0 } : null; cel._pngStamp = cel._stamp; }
+          cel.dirty();
+        });
       }
     } else {
-      for (const [cel, name] of ras) { cel._file = { id, name }; cel._fileStamp = cel._stamp; trackCel(cel); cel.dirty(); }
+      for (const [cel, name, cd] of ras) {
+        cel._file = cd.x != null ? { id, name, x: cd.x | 0, y: cd.y | 0 } : { id, name };
+        cel._fileStamp = cel._stamp; trackCel(cel); cel.dirty();
+      }
     }
     if (!p.layers.length) p.layers.push(new OT.Layer('Drawing 1'));
     return { project: p, palette: data.palette, workspace: data.workspace || null,
