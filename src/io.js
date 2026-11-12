@@ -212,7 +212,7 @@
     ctx.scale(outW / viewW, outH / viewH);
     ctx.translate(-cx, -cy);
     ctx.imageSmoothingEnabled = true;
-    app.stage.compositeStage(frame, ctx, { bg: false });
+    app.stage.compositeStage(frame, ctx, { bg: false, final: true });
     ctx.restore();
     return cv;
   }
@@ -571,6 +571,7 @@
         collapsed: !!l._collapsed,
         cels: cels
       };
+      if (l.reference) out.reference = true;          // e.g. a storyboard panel layer
       if (l.video) {
         const m = mediaEntry(l.video, l.video.src, entries, commits);
         out.video = Object.assign({}, l.video, m ? { src: m.src, mime: m.mime } : {});
@@ -597,6 +598,8 @@
       workspace: captureWorkspace(app),
       layers: layers
     };
+    // written by Finca Storyboard; kept exactly as it came in
+    if (p.storyboard !== undefined) scene.storyboard = p.storyboard;
     return { scene: JSON.stringify(scene), entries: unique, commits, inScene, encoded };
   }
 
@@ -662,6 +665,7 @@
       fps: data.fps, frameCount: data.frameCount, bg: data.bg, empty: true
     });
     p.camera = data.camera || { keyframes: [] };
+    if (data.storyboard !== undefined) p.storyboard = data.storyboard;
     p.audio = null;
     if (data.audio) {
       p.audio = Object.assign({}, data.audio);
@@ -697,6 +701,9 @@
       }
       layer.parentId = ld.parentId || null;
       layer._collapsed = !!ld.collapsed;
+      // reference layers (storyboard panels): locked unless the file says
+      // otherwise, shown while animating, left out of renders and exports
+      if (ld.reference === true) { layer.reference = true; if (ld.locked === undefined) layer.locked = true; }
       const isVec = ld.type === 'vector';
       for (const num in (ld.cels || {})) {
         const cd = ld.cels[num] || {};

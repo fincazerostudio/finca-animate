@@ -64,7 +64,7 @@
         .then(() => this._collectRecents())
         .then(recents => {
           this._render(recents);
-          requestAnimationFrame(() => this.root.classList.add('is-ready'));
+          requestAnimationFrame(() => { if (this.root) this.root.classList.add('is-ready'); });   // may be closed already
         });
     }
 

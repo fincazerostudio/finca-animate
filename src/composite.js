@@ -103,6 +103,7 @@
     for (const layer of project.layers) {
       if (layer.type === 'group') continue;       // folders don't render
       if (!layer.visible) continue;
+      if (opts.final && layer.reference) continue;   // reference layers never reach an export
       if (!ancestorVisible(layer)) continue;
       if (layer.type === 'video') {
         if (!includeVideo) continue;

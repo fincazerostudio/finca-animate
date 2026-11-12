@@ -34,6 +34,9 @@ async function launch(tmp, extraEnv) {
     page = app.windows().find(w => /index\.html$/.test(w.url())) || null;
     if (!page) await new Promise(r => setTimeout(r, 200));
   }
+  page.on('crash', () => console.log('     (renderer crashed)'));
+  app.process().stderr.on('data', d => { if (/FATAL|crash|Error/i.test(String(d))) process.stdout.write('     [app] ' + String(d).slice(0, 400)); });
+  page.on('pageerror', e => console.log('     [page error] ' + String(e && (e.stack || e.message)).slice(0, 600)));
   await page.waitForFunction(() => window.OT && window.OT.app && window.OT.app.ui, null, { timeout: 30000 });
   await page.evaluate(() => { const l = window.OT.app._launcher; if (l) l.close(); });
   // helpers used by the checks below
@@ -376,6 +379,65 @@ const setSavePath = (app, p) => app.evaluate(({ dialog }, f) => {
   check('the next autosave only encodes the edited drawing', auto.second.encoded === 1 && auto.second.copied === 11, auto.second);
   check('restoring the autosave gives back the latest drawings, detached from the autosave file', auto.same && auto.differs && auto.detached && auto.path === null, auto);
   check('autosave history has a snapshot that opens; path tricks are refused', auto.hist.length === 1 && /^autosave-\d+\.finca$/.test(auto.hist[0]) && auto.snapLayers === 4 && auto.evil.ok === false, auto);
+  await page.evaluate(() => { window.OT.app.dirty = false; });
+  await app.close();
+
+  /* ---------- 8b. a .finca written by another tool (Finca Storyboard) ---------- */
+  // Plain names (no content hash), a deflated PNG, no mimetype entry, a
+  // storyboard block and a reference (board panel) layer.
+  ({ app, page } = await launch(tmp));
+  const outside = path.join(tmp, 'sq010_sh020.finca');
+  const pngs = await page.evaluate(() => {
+    const mk = (color, x) => {
+      const c = document.createElement('canvas'); c.width = 160; c.height = 90;
+      const g = c.getContext('2d'); g.fillStyle = color; g.fillRect(x, 20, 40, 40);
+      return c.toDataURL('image/png').split(',')[1];
+    };
+    return { panel: mk('#ff0000', 10), anim: mk('#0000ff', 100) };
+  });
+  const storyboard = { shotId: 'sq010_sh020', source: 'finca-storyboard', updated: '2026-11-11T10:00:00Z',
+    panels: [{ start: 0, duration: 4, action: 'Hero turns', dialogue: '', notes: 'hold on 2s', extra: { keep: [1, 2] } }] };
+  {
+    const fd = fs.openSync(outside, 'w');
+    const w = new Z.Writer(fd);                       // no mimetype entry on purpose
+    w.add('scene.json', Buffer.from(JSON.stringify({
+      format: 'finca', version: 3, name: 'sq010_sh020', width: 160, height: 90, fps: 24, frameCount: 4, bg: '#ffffff',
+      storyboard,
+      layers: [
+        { id: 'board', name: 'Board', type: 'drawing', reference: true, exposure: [1, 1, 1, 1], nextNum: 2,
+          cels: { 1: { k: 'r', src: 'drawings/board/1-panel.png', w: 160, h: 90 } } },
+        { id: 'anim', name: 'Anim', type: 'drawing', exposure: [1, 1, 1, 1], nextNum: 2,
+          cels: { 1: { k: 'r', src: 'drawings/anim/1-x.png', w: 160, h: 90 } } }
+      ]
+    })), true);
+    w.add('drawings/board/1-panel.png', Buffer.from(pngs.panel, 'base64'), true);
+    w.add('drawings/anim/1-x.png', Buffer.from(pngs.anim, 'base64'), false);
+    w.finish();
+    fs.closeSync(fd);
+  }
+  await app.evaluate(({ dialog }, p) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [p] }); }, outside);
+  const ext = await page.evaluate(async (f) => {
+    const OT = window.OT, a = OT.app;
+    const p = await window.OpenToonDesktop.fs.openDialog();
+    await window.openScene(p);
+    const board = a.project.layers[0];
+    const px = (cv, x, y) => Array.from(cv.getContext('2d').getImageData(x, y, 1, 1).data);
+    const out = OT.IO.renderFrame(a, 0, 160, 90);              // what every export uses
+    const stage = document.createElement('canvas'); stage.width = 160; stage.height = 90;
+    a.stage.compositeStage(0, stage.getContext('2d'), { bg: false });
+    a.dirty = true;
+    await OT.IO.writeProjectTo(a, f);
+    const save = OT.IO.stats.lastSave;
+    const d = await OT.IO.readProjectFrom(f);
+    return { locked: board.locked, ref: board.reference, failed: OT.Cel.stats.failed,
+             exportPanel: px(out, 30, 40), exportAnim: px(out, 120, 40), stagePanel: px(stage, 30, 40),
+             save, sbAgain: JSON.stringify(d.project.storyboard), refAgain: d.project.layers[0].reference === true && d.project.layers[0].locked };
+  }, outside);
+  const entB = zipEntries(outside);
+  check('an outside-tool .finca opens (plain names, deflated PNG, no mimetype entry)', ext.failed === 0 && ext.stagePanel[0] > 200 && ext.exportAnim[2] > 200, ext);
+  check('reference layer: locked by default, visible on stage, left out of exports', ext.ref === true && ext.locked === true && ext.exportPanel[0] > 200 && ext.exportPanel[1] > 200 && ext.exportPanel[2] > 200 && ext.stagePanel[1] < 50, ext);
+  check('storyboard block and reference flag survive a save untouched', ext.sbAgain === JSON.stringify(storyboard) && ext.refAgain, ext.sbAgain);
+  check('unchanged outside drawings are copied with their names kept', ext.save.encoded === 0 && entB.has('drawings/board/1-panel.png') && entB.has('drawings/anim/1-x.png') && entB.get('drawings/board/1-panel.png').method === 8, [...entB.keys()]);
   await page.evaluate(() => { window.OT.app.dirty = false; });
   await app.close();
 
