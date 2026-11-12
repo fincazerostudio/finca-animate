@@ -220,6 +220,7 @@
           if (fr < 0 || fr >= app.project.frameCount) break;
           const cel = layer.celAt(fr);
           if (!cel) continue;
+          if (cel.parked) { cel.load(); continue; }      // drawn once it has loaded
           const a = U.lerp(o.maxAlpha, o.minAlpha, (i - 1) / Math.max(1, count - 1));
           ctx.globalAlpha = a;
           ctx.save();
@@ -280,7 +281,7 @@
       // the artist can see which layer they're working on. Skip during
       // playback (would flicker) and when only one drawable layer exists.
       const focusOpts = this._focusComposite();
-      this.compositeStage(this.app.frame, ctx, Object.assign({ bg: false }, focusOpts));
+      this.compositeStage(this.app.frame, ctx, Object.assign({ bg: false, lazy: true }, focusOpts));
 
       // active tool may draw on the cel directly; nothing else here
       this.renderOverlay();

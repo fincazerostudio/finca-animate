@@ -224,6 +224,12 @@
           // unset and this is a no-op.
           if (isActive && wetStroke) { V.renderStroke(ctx, wetStroke); wetRendered = true; }
         }
+      } else if (opts.lazy && cel.parked) {
+        // On-screen drawing only: this drawing is not in memory yet. Start
+        // loading it (the stage redraws when it arrives) and show its
+        // thumbnail meanwhile rather than freezing the view to decode it.
+        cel.load();
+        if (cel.thumb && !cel.thumbDirty) ctx.drawImage(cel.thumb, 0, 0, project.width, project.height);
       } else if (cel.canvas) {
         // Defensive guard against missing cel.canvas (the original always
         // assumed it existed; on the pen-window raster placeholder it can

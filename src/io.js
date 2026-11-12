@@ -1,4 +1,4 @@
-/* OpenToon Studio - project save/load + export */
+/* Finca Animate / OpenToon Studio - project save/load + export */
 (function (OT) {
   'use strict';
   const U = OT.util;
@@ -68,6 +68,7 @@
     return u;
   }
   function canvasToBlob(cv, type, q) {
+    if ((!type || type === 'image/png') && OT.encodePNG) return OT.encodePNG(cv);
     return new Promise(res => cv.toBlob(res, type || 'image/png', q));
   }
 
@@ -258,6 +259,7 @@
     const dur = 1000 / fps;
     for (let f = from; f <= to; f++) {
       await app.seekVideosTo(f);
+      await IO.loadFrame(app, f);
       const fr = renderFrame(app, f, outW, outH);
       ctx.clearRect(0, 0, outW, outH);
       ctx.drawImage(fr, 0, 0);
@@ -281,6 +283,7 @@
       const { outW, outH, from, to } = opts;
       for (let f = from; f <= to; f++) {
         await app.seekVideosTo(f);
+        await IO.loadFrame(app, f);
         const cv = renderFrame(app, f, outW, outH);
         const blob = await canvasToBlob(cv, 'image/png');
         const buf = new Uint8Array(await blob.arrayBuffer());
@@ -297,6 +300,7 @@
       });
       for (let f = from; f <= to; f++) {
         await app.seekVideosTo(f);
+        await IO.loadFrame(app, f);
         const cv = renderFrame(app, f, outW, outH);
         const id = cv.getContext('2d').getImageData(0, 0, outW, outH);
         enc.addFrame(id);
@@ -309,58 +313,531 @@
     mp4(app, opts, onProgress) { return recordVideo(app, opts, onProgress, 'mp4'); }
   };
 
+  /* =====================================================================
+     .finca: the native project format (format version 3)
+     One zip file: a small scene.json plus one entry per drawing
+     (drawings/<layer>/<num>-<hash>.png for raster, .json for vector) and
+     one per imported sound / video (media/<hash>.<ext>).
+
+     Saving never reads a vector cel's surface (strokes are the drawing),
+     never needs a drawing to be in memory, and only encodes drawings that
+     changed: everything else is copied byte for byte out of the previous
+     file by the main process. Opening reads scene.json and the vector
+     strokes; raster drawings stay in the file until they are needed
+     (OT.Cel.load / the synchronous fallback in OT.Cel._alloc).
+     ===================================================================== */
+  const FINCA_VERSION = 3;
+  const stats = { saves: 0, encoded: 0, copied: 0, lastSave: null };
+
+  // 53-bit string / byte hash (cyrb53) as 11 base-36 characters: names the
+  // entry after its content, so a changed drawing gets a new name.
+  function hashBytes(b) {
+    let h1 = 0xdeadbeef ^ b.length, h2 = 0x41c6ce57 ^ b.length;
+    for (let i = 0; i < b.length; i++) {
+      const c = b[i];
+      h1 = Math.imul(h1 ^ c, 2654435761); h2 = Math.imul(h2 ^ c, 1597334677);
+    }
+    return finishHash(h1, h2);
+  }
+  function hashString(s) {
+    let h1 = 0xdeadbeef ^ s.length, h2 = 0x41c6ce57 ^ s.length;
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charCodeAt(i);
+      h1 = Math.imul(h1 ^ c, 2654435761); h2 = Math.imul(h2 ^ c, 1597334677);
+    }
+    return finishHash(h1, h2);
+  }
+  function finishHash(h1, h2) {
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36).padStart(11, '0');
+  }
+  const safeName = s => String(s).replace(/[^A-Za-z0-9_\-]/g, '_').replace(/^-/, '_') || '_';
+
+  /* ---- where entries come from ----
+     A source is an open project the renderer can ask for entries by name:
+     numbers are .finca files held open by the desktop main process, 'm..'
+     ids are zip files held in memory (browser build). */
+  const memSources = new Map();
+  let memSeq = 0;
+  const liveSource = id => (typeof id === 'number' ? !!desktopFS() : memSources.has(id));
+  function readEntries(id, names) {
+    if (typeof id === 'number') {
+      const fsd = desktopFS();
+      return fsd ? fsd.fincaRead(id, names) : Promise.resolve(names.map(() => null));
+    }
+    const m = memSources.get(id);
+    return Promise.all(names.map(n => (m ? m.read(n) : null)));
+  }
+  function readEntry(ref) {
+    if (!ref) return Promise.resolve(null);
+    return readEntries(ref.id, [ref.name]).then(r => r[0] || null, () => null);
+  }
+  function readEntrySync(ref) {
+    if (!ref) return null;
+    if (typeof ref.id === 'number') {
+      const fsd = desktopFS();
+      try { return fsd ? fsd.fincaReadSync(ref.id, ref.name) : null; } catch (e) { return null; }
+    }
+    const m = memSources.get(ref.id);
+    return m ? m.readSync(ref.name) : null;
+  }
+
+  // Minimal zip reader for the browser build: the whole file is in memory.
+  async function memZip(buf) {
+    const b = new Uint8Array(buf), dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+    let e = -1;
+    for (let i = b.length - 22; i >= Math.max(0, b.length - 65557); i--)
+      if (dv.getUint32(i, true) === 0x06054b50) { e = i; break; }
+    if (e < 0) throw new Error('Not a Finca Animate project');
+    const count = dv.getUint16(e + 10, true);
+    let p = dv.getUint32(e + 16, true);
+    if (count === 0xFFFF || p === 0xFFFFFFFF) throw new Error('This project is too large for the browser build; open it in the desktop app');
+    const dec = new TextDecoder(), entries = new Map();
+    for (let i = 0; i < count; i++) {
+      if (dv.getUint32(p, true) !== 0x02014b50) throw new Error('Damaged project file');
+      const method = dv.getUint16(p + 10, true), csize = dv.getUint32(p + 20, true);
+      const nl = dv.getUint16(p + 28, true), xl = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true);
+      const off = dv.getUint32(p + 42, true);
+      const name = dec.decode(b.subarray(p + 46, p + 46 + nl));
+      const data = off + 30 + dv.getUint16(off + 26, true) + dv.getUint16(off + 28, true);
+      entries.set(name, { method, raw: b.subarray(data, data + csize) });
+      p += 46 + nl + xl + cl;
+    }
+    // inflate the (few, small) deflated entries up front so reads can be synchronous
+    for (const en of entries.values()) {
+      if (en.method === 0) en.bytes = en.raw;
+      else if (en.method === 8) {
+        const ds = new Blob([en.raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+        en.bytes = new Uint8Array(await new Response(ds).arrayBuffer());
+      } else throw new Error('Damaged project file');
+    }
+    const id = 'm' + (++memSeq);
+    const get = n => { const en = entries.get(n); return en ? en.bytes : null; };
+    memSources.set(id, { read: get, readSync: get });
+    return id;
+  }
+
+  /* ---- imported sound / video ----
+     In memory these are data: URLs on project.audio.data / layer.video.src.
+     In the file they are raw bytes under media/. `mediaSaved` remembers
+     which entry a data URL came from so it is copied, not re-encoded. */
+  const mediaSaved = new WeakMap();        // holder object -> { url, id, name, mime }
+  const MEDIA_EXT = { 'audio/mpeg': 'mp3', 'audio/wav': 'wav', 'audio/x-wav': 'wav', 'audio/ogg': 'ogg',
+    'audio/mp4': 'm4a', 'audio/aac': 'aac', 'audio/flac': 'flac', 'audio/webm': 'weba',
+    'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov', 'video/x-matroska': 'mkv' };
+  function mediaEntry(holder, url, entries, pending) {
+    if (typeof url !== 'string' || !/^data:/.test(url)) return null;
+    const rec = mediaSaved.get(holder);
+    if (rec && rec.url === url && liveSource(rec.id)) {
+      entries.push({ name: rec.name, from: { id: rec.id, name: rec.name } });
+      pending.push(newId => { rec.id = newId; });
+      return { src: rec.name, mime: rec.mime };
+    }
+    const mime = (url.slice(5, url.indexOf(',')).split(';')[0] || 'application/octet-stream').toLowerCase();
+    const bytes = dataURLtoBytes(url);
+    const name = 'media/' + hashBytes(bytes) + '.' + (MEDIA_EXT[mime] || 'bin');
+    entries.push({ name, data: bytes });
+    pending.push(newId => { mediaSaved.set(holder, { url, id: newId, name, mime }); });
+    return { src: name, mime };
+  }
+  function bytesToDataURL(bytes, mime) {
+    return new Promise((res, rej) => {
+      const fr = new FileReader();
+      fr.onload = () => res(fr.result);
+      fr.onerror = () => rej(new Error('media read failed'));
+      fr.readAsDataURL(new Blob([bytes], { type: mime || 'application/octet-stream' }));
+    });
+  }
+
+  // Cels that came from (or were saved into) a project file. Cels that
+  // leave the scene but live on in the undo history keep pointing at their
+  // entry; before a save drops that entry they are given their bytes.
+  const fileCels = new Set();              // WeakRef<Cel>
+  const trackCel = cel => { if (typeof WeakRef === 'function') fileCels.add(new WeakRef(cel)); };
+  async function detachStrays(targetId, inScene) {
+    const strays = [];
+    for (const ref of fileCels) {
+      const c = ref.deref();
+      if (!c || !c._file) { fileCels.delete(ref); continue; }
+      if (c._file.id === targetId && !inScene.has(c)) strays.push(c);
+    }
+    for (const c of strays) {
+      if (c.kind !== 'vector' && c.parked && !c._png) {
+        const bytes = await readEntry(c._file);
+        if (bytes && c.parked && !c._png) { c._png = bytes; c._pngStamp = c._stamp; }
+      }
+      c._file = null;
+    }
+  }
+
+  // Run async jobs a few at a time (PNG encodes).
+  async function pool(jobs, n) {
+    let i = 0;
+    const worker = async () => { while (i < jobs.length) await jobs[i++](); };
+    await Promise.all(Array.from({ length: Math.min(n, jobs.length) }, worker));
+  }
+
+  /* Build what a save needs: the scene JSON and the entry list.
+     slot 'file'  : saving the project file (cels then point into it)
+     slot 'auto'  : crash-recovery autosave (cels keep pointing at their own file)
+     slot 'bytes' : every entry as bytes (browser download)                  */
+  async function buildFinca(app, slot, autoId) {
+    const p = app.project;
+    const entries = [], names = new Set(), jobs = [], commits = [], inScene = new Set();
+    let encoded = 0;
+    const put = e => { if (!names.has(e.name)) { names.add(e.name); entries.push(e); } };
+    const layers = p.layers.map(l => {
+      const cels = {}, dir = 'drawings/' + safeName(l.id) + '/';
+      for (const num in l.cels) {
+        const c = l.cels[num];
+        if (!c) continue;
+        inScene.add(c);
+        const ref = { k: c.kind === 'vector' ? 'v' : 'r', w: c.w, h: c.h };
+        cels[num] = ref;
+        const auto = slot === 'auto' && c._auto && c._auto.id === autoId && liveSource(autoId) ? c._auto : null;
+        const fileOk = c._file && liveSource(c._file.id);
+        if (c.kind === 'vector') {
+          const text = JSON.stringify({ strokes: c.strokes || [], eraserMarks: c.eraserMarks || [] });
+          const name = dir + safeName(num) + '-' + hashString(text) + '.json';
+          ref.src = name;
+          if (auto && auto.name === name) put({ name, from: { id: autoId, name } });
+          else if (fileOk && c._file.name === name) put({ name, from: c._file });
+          else { put({ name, text }); encoded++; }
+          commits.push(id => {
+            if (slot === 'file') { if (!c._file) trackCel(c); c._file = { id, name }; }
+            else if (slot === 'auto') c._auto = { id, name };
+          });
+          continue;
+        }
+        if (!c._canvas && !c._png && !c._file) continue;          // never drawn on: nothing to store
+        // Which stored copy (if any) is exactly this drawing right now?
+        // Parked: _png when there is one, else the file. In memory: whichever
+        // carries the current stamp.
+        const resident = !!c._canvas, stamp = c._stamp;
+        const usePng = !!c._png && (!resident || c._pngStamp === stamp);
+        const useFile = !usePng && fileOk && (resident ? c._fileStamp === stamp : true);
+        if (auto && auto.stamp === stamp) {
+          ref.src = auto.name;
+          put({ name: auto.name, from: { id: autoId, name: auto.name } });
+        } else if (useFile) {
+          const name = c._file.name;
+          ref.src = name;
+          put({ name, from: c._file });
+          commits.push(id => {
+            if (slot === 'file') { c._file = { id, name }; if (!c._canvas) c._fileStamp = c._stamp; }
+            else if (slot === 'auto') c._auto = { id, name, stamp };
+          });
+        } else if (usePng) {
+          const bytes = c._png;
+          const name = dir + safeName(num) + '-' + hashBytes(bytes) + '.png';
+          ref.src = name;
+          put({ name, data: bytes });
+          commits.push(id => {
+            if (slot === 'file') {
+              if (!c._file) trackCel(c);
+              c._file = { id, name };
+              c._fileStamp = c._canvas ? stamp : c._stamp;
+              if (c._png === bytes) c._png = null;                 // the file holds it now
+            } else if (slot === 'auto') c._auto = { id, name, stamp };
+          });
+        } else {
+          // changed (or never saved): encode it now, off the main thread
+          jobs.push(async () => {
+            const cv = c.canvas, st = c._stamp;
+            const blob = await canvasToBlob(cv);
+            const bytes = new Uint8Array(await blob.arrayBuffer());
+            const name = dir + safeName(num) + '-' + hashBytes(bytes) + '.png';
+            ref.src = name;
+            put({ name, data: bytes });
+            encoded++;
+            commits.push(id => {
+              if (slot === 'file') {
+                if (!c._file) trackCel(c);
+                c._file = { id, name }; c._fileStamp = st;
+              } else if (slot === 'auto') c._auto = { id, name, stamp: st };
+            });
+          });
+        }
+      }
+      const out = {
+        id: l.id, name: l.name, type: l.type,
+        visible: l.visible, locked: l.locked, opacity: l.opacity, color: l.color,
+        exposure: l.exposure.slice(), nextNum: l.nextNum,
+        transform: JSON.parse(JSON.stringify(l.transform || { keyframes: [] })),
+        pivot: l.pivot || null,
+        video: null,
+        parentId: l.parentId || null,
+        collapsed: !!l._collapsed,
+        cels: cels
+      };
+      if (l.video) {
+        const m = mediaEntry(l.video, l.video.src, entries, commits);
+        out.video = Object.assign({}, l.video, m ? { src: m.src, mime: m.mime } : {});
+      }
+      return out;
+    });
+    await pool(jobs, 4);
+    let audio = null;
+    if (p.audio) {
+      const m = mediaEntry(p.audio, p.audio.data, entries, commits);
+      audio = Object.assign({}, p.audio, m ? { data: null, src: m.src, mime: m.mime } : {});
+    }
+    // media entries were pushed straight onto `entries`: drop duplicates
+    const seen = new Set(), unique = [];
+    for (const e of entries) if (!seen.has(e.name)) { seen.add(e.name); unique.push(e); }
+    const scene = {
+      format: 'finca', version: FINCA_VERSION,
+      name: p.name, width: p.width, height: p.height,
+      fps: p.fps, frameCount: p.frameCount, bg: p.bg,
+      palette: app.palette.serialize(),
+      camera: { keyframes: p.camera.keyframes.map(k => ({ ...k })) },
+      audio: audio,
+      perspective: p.perspective,
+      workspace: captureWorkspace(app),
+      layers: layers
+    };
+    return { scene: JSON.stringify(scene), entries: unique, commits, inScene, encoded };
+  }
+
+  // Small preview of frame 1 for file browsers and the start screen.
+  async function thumbnailEntry(app) {
+    try {
+      await IO.loadFrame(app, 0);
+      const p = app.project, s = Math.min(1, 320 / p.width);
+      const cv = renderFrame(app, 0, Math.max(2, Math.round(p.width * s)), Math.max(2, Math.round(p.height * s)));
+      const blob = await canvasToBlob(cv);
+      return { name: 'thumbnail.png', data: new Uint8Array(await blob.arrayBuffer()) };
+    } catch (e) { return null; }
+  }
+
+  // Saves run one at a time (a timer save and Ctrl+S must not interleave).
+  let saveChain = Promise.resolve();
+  const queued = fn => {
+    const run = saveChain.then(fn, fn);
+    saveChain = run.catch(() => {});
+    return run;
+  };
+  const pathIds = new Map();               // project path -> source id (desktop)
+  let autosaveId = null;
+
+  async function writeFinca(app, target, opts) {
+    const fsd = desktopFS();
+    if (!fsd) throw new Error('no file system');
+    const auto = !!(target && target.autosave);
+    const t0 = performance.now();
+    const seq = app._dirtySeq;
+    const b = await buildFinca(app, auto ? 'auto' : 'file', autosaveId);
+    let r;
+    {
+      if (!auto && opts && opts.thumbnail) {
+        const th = await thumbnailEntry(app);
+        if (th) b.entries.push(th);
+      } else if (!auto && pathIds.has(target)) {
+        // keep the previous preview on quick background saves
+        b.entries.push({ name: 'thumbnail.png', from: { id: pathIds.get(target), name: 'thumbnail.png' }, optional: true });
+      }
+      // a drawing that left the scene but is still in the undo history must
+      // not be left pointing at an entry this save is about to drop
+      if (!auto && pathIds.has(target)) await detachStrays(pathIds.get(target), b.inScene);
+      r = await fsd.fincaWrite(target, { scene: b.scene, entries: b.entries });
+    }
+    if (!r || !r.ok) throw new Error((r && r.error) || 'write failed');
+    for (const c of b.commits) c(r.id);
+    if (auto) autosaveId = r.id; else pathIds.set(target, r.id);
+    stats.saves++; stats.encoded += b.encoded; stats.copied += r.copied;
+    stats.lastSave = { ms: Math.round(performance.now() - t0), encoded: b.encoded, written: r.written,
+      copied: r.copied, bytes: r.bytes, auto };
+    if (app._dirtySeq === seq) app.dirty = false;      // nothing was edited while saving
+    return r;
+  }
+
+  // scene.json (+ its source) -> { project, palette, ... }. detach: read
+  // every drawing into memory instead of leaving it in the file (used for
+  // autosaves and in the browser, where the file may go away).
+  async function deserializeFinca(data, id, detach) {
+    if (!data || data.format !== 'finca') throw new Error('Not a Finca Animate project');
+    const p = new OT.Project({
+      name: data.name, width: data.width, height: data.height,
+      fps: data.fps, frameCount: data.frameCount, bg: data.bg, empty: true
+    });
+    p.camera = data.camera || { keyframes: [] };
+    p.audio = null;
+    if (data.audio) {
+      p.audio = Object.assign({}, data.audio);
+      delete p.audio.src; delete p.audio.mime;
+      if (data.audio.src) {
+        const bytes = await readEntry({ id, name: data.audio.src });
+        p.audio.data = bytes ? await bytesToDataURL(bytes, data.audio.mime) : null;
+        if (bytes && !detach) mediaSaved.set(p.audio, { url: p.audio.data, id, name: data.audio.src, mime: data.audio.mime });
+        if (!p.audio.data) p.audio = null;
+      }
+    }
+    if (data.perspective && data.perspective.vp1) p.perspective = Object.assign(OT.Project.defaultPerspective(), data.perspective);
+    const vec = [], ras = [];
+    for (const ld of data.layers || []) {
+      const layer = new OT.Layer(ld.name, ld.type);
+      layer.id = ld.id || layer.id;
+      layer.visible = ld.visible !== false;
+      layer.locked = !!ld.locked;
+      layer.opacity = ld.opacity == null ? 1 : ld.opacity;
+      layer.color = ld.color || '#3d9be0';
+      layer.exposure = (ld.exposure || []).slice();
+      layer.nextNum = ld.nextNum || 1;
+      layer.transform = ld.transform && ld.transform.keyframes ? ld.transform : { keyframes: [] };
+      layer.pivot = ld.pivot && isFinite(ld.pivot.x) && isFinite(ld.pivot.y) ? { x: +ld.pivot.x, y: +ld.pivot.y } : null;
+      if (ld.video) {
+        layer.video = Object.assign({}, ld.video);
+        delete layer.video.mime;
+        if (ld.video.src && !/^data:/.test(ld.video.src)) {
+          const bytes = await readEntry({ id, name: ld.video.src });
+          layer.video.src = bytes ? await bytesToDataURL(bytes, ld.video.mime) : '';
+          if (bytes && !detach) mediaSaved.set(layer.video, { url: layer.video.src, id, name: ld.video.src, mime: ld.video.mime });
+        }
+      }
+      layer.parentId = ld.parentId || null;
+      layer._collapsed = !!ld.collapsed;
+      const isVec = ld.type === 'vector';
+      for (const num in (ld.cels || {})) {
+        const cd = ld.cels[num] || {};
+        const cel = new OT.Cel(Number(num), cd.w || p.width, cd.h || p.height, isVec ? 'vector' : 'raster');
+        if (cd.src) (isVec ? vec : ras).push([cel, cd.src]);
+        layer.cels[num] = cel;
+      }
+      p.layers.push(layer);
+    }
+    // vector strokes are the drawing: read them all (small, no surfaces)
+    for (let i = 0; i < vec.length; i += 256) {
+      const part = vec.slice(i, i + 256);
+      const got = await readEntries(id, part.map(v => v[1]));
+      part.forEach(([cel, name], k) => {
+        try {
+          const d = JSON.parse(new TextDecoder().decode(got[k]));
+          cel.strokes = d.strokes || [];
+          cel.eraserMarks = Array.isArray(d.eraserMarks) ? d.eraserMarks : [];
+          if (!detach) { cel._file = { id, name }; trackCel(cel); }
+        } catch (e) { console.error('Drawing ' + name + ' could not be read'); }
+        cel.dirty();
+      });
+    }
+    // raster drawings stay where they are until they are needed
+    if (detach) {
+      for (let i = 0; i < ras.length; i += 64) {
+        const part = ras.slice(i, i + 64);
+        const got = await readEntries(id, part.map(r => r[1]));
+        part.forEach(([cel], k) => { if (got[k]) { cel._png = got[k]; cel._pngStamp = cel._stamp; } cel.dirty(); });
+      }
+    } else {
+      for (const [cel, name] of ras) { cel._file = { id, name }; cel._fileStamp = cel._stamp; trackCel(cel); cel.dirty(); }
+    }
+    if (!p.layers.length) p.layers.push(new OT.Layer('Drawing 1'));
+    return { project: p, palette: data.palette, workspace: data.workspace || null,
+             version: data.version || FINCA_VERSION, newer: (data.version || FINCA_VERSION) > FINCA_VERSION };
+  }
+
+  async function openFinca(target, detach) {
+    const fsd = desktopFS();
+    if (!fsd) throw new Error('no file system');
+    const r = await fsd.fincaOpen(target);
+    if (!r || !r.ok) throw new Error((r && r.error) || 'read failed');
+    let data;
+    try { data = JSON.parse(r.scene); } catch (e) { throw new Error('Not a Finca Animate project'); }
+    const d = await deserializeFinca(data, r.id, !!detach);
+    if (typeof target === 'string' && !detach) pathIds.set(target, r.id);
+    d.time = r.time;
+    return d;
+  }
+
   /* ---------------- save / open / autosave ---------------- */
   const AUTO_KEY = 'opentoon.autosave';
   // the desktop file bridge (null in a plain browser)
   const desktopFS = () => (window.OpenToonDesktop && window.OpenToonDesktop.fs) || null;
 
   const IO = {
-    serialize, deserialize, renderFrame, Export, loadImage, FORMAT_VERSION,
+    serialize, deserialize, renderFrame, Export, loadImage,
+    // newest project format this build reads and writes (.finca); .otoon
+    // JSON files (OTOON_VERSION and older) are read-only imports
+    FORMAT_VERSION: FINCA_VERSION, OTOON_VERSION: FORMAT_VERSION,
+    stats, readEntry, readEntrySync, openFinca,
 
-    // browser fallback: download the project as a file
-    saveProject(app) {
-      const data = serialize(app);
-      const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+    // Bring the drawings a frame shows into memory (background decode).
+    loadFrame(app, frame) {
+      const jobs = [];
+      for (const l of app.project.layers) {
+        const c = l.celAt ? l.celAt(frame) : null;
+        if (c && c.parked) jobs.push(c.load());
+      }
+      return jobs.length ? Promise.all(jobs) : Promise.resolve();
+    },
+    // Bring specific drawings into memory before an operation that reads many.
+    loadCels(cels) {
+      const jobs = [];
+      for (const c of cels || []) if (c && c.parked) jobs.push(c.load());
+      return jobs.length ? Promise.all(jobs) : Promise.resolve();
+    },
+
+    // browser fallback: download the project as a .finca file
+    async saveProject(app) {
+      const enc = new TextEncoder();
+      const b = await buildFinca(app, 'bytes');
+      const zip = new Zip();
+      zip.add('mimetype', enc.encode('application/x-finca-animate'));
+      zip.add('scene.json', enc.encode(b.scene));
+      for (const e of b.entries) {
+        const data = e.data || (e.text != null ? enc.encode(e.text) : await readEntry(e.from));
+        if (data) zip.add(e.name, data);
+      }
       const name = (app.project.name || 'untitled').replace(/[^\w\-]+/g, '_');
-      U.download(name + '.otoon', blob);
+      U.download(name + '.finca', zip.build());
       app.dirty = false;
     },
-    // desktop: write the project straight to a real file path
-    writeProjectTo(app, filePath) {
-      const fsd = desktopFS();
-      if (!fsd) return Promise.reject(new Error('no file system'));
-      return fsd.writeFile(filePath, JSON.stringify(serialize(app))).then(r => {
-        if (!r || !r.ok) throw new Error((r && r.error) || 'write failed');
-        app.dirty = false;
-        return filePath;
-      });
+    // desktop: write the project to a real .finca file. Only drawings that
+    // changed since the last save are encoded; the rest is copied.
+    writeProjectTo(app, filePath, opts) {
+      if (!desktopFS()) return Promise.reject(new Error('no file system'));
+      if (!/\.finca$/i.test(filePath || '')) return Promise.reject(new Error('projects are saved as .finca files'));
+      return queued(() => writeFinca(app, filePath, opts)).then(() => filePath);
     },
-    // desktop: read + parse a project from a real file path
+    // desktop: open a project from a real file path. A .otoon (the older
+    // one-file format) comes back with `imported: true`: it is never
+    // written to, the first save asks for a .finca name.
     readProjectFrom(filePath) {
       const fsd = desktopFS();
       if (!fsd) return Promise.reject(new Error('no file system'));
+      if (/\.finca$/i.test(filePath || '')) return openFinca(filePath, false);
       return fsd.readFile(filePath).then(r => {
         if (!r || !r.ok) throw new Error((r && r.error) || 'read failed');
         const data = JSON.parse(r.data);
         if (data.format !== 'otoon') throw new Error('Not an OpenToon project');
-        return deserialize(data);
+        return deserialize(data).then(d => { d.imported = true; return d; });
       });
     },
     // browser fallback: parse a project from a picked File object
-    openProjectFile(app, file) {
-      return file.text().then(txt => {
-        const data = JSON.parse(txt);
-        if (data.format !== 'otoon') throw new Error('Not an OpenToon project');
-        return deserialize(data);
-      });
+    async openProjectFile(app, file) {
+      const buf = await file.arrayBuffer();
+      const head = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
+      if (head[0] === 0x50 && head[1] === 0x4b) {                 // "PK": a .finca
+        const id = await memZip(buf);
+        try {
+          const scene = await readEntry({ id, name: 'scene.json' });
+          if (!scene) throw new Error('Not a Finca Animate project');
+          return await deserializeFinca(JSON.parse(new TextDecoder().decode(scene)), id, true);
+        } finally { memSources.delete(id); }
+      }
+      const data = JSON.parse(new TextDecoder().decode(buf));
+      if (data.format !== 'otoon') throw new Error('Not an OpenToon project');
+      const d = await deserialize(data);
+      d.imported = true;
+      return d;
     },
     // crash-safe autosave: a real file on desktop, localStorage in the browser
     autosave(app) {
-      const json = JSON.stringify(serialize(app));
-      const fsd = desktopFS();
-      if (fsd) { fsd.autosaveWrite(json).catch(() => {}); return true; }
+      if (desktopFS()) {
+        queued(() => writeFinca(app, { autosave: true })).catch(e => console.error('autosave failed: ' + e.message));
+        return true;
+      }
       try {
-        localStorage.setItem(AUTO_KEY, json);
+        localStorage.setItem(AUTO_KEY, JSON.stringify(serialize(app)));
         localStorage.setItem(AUTO_KEY + '.time', Date.now().toString());
         return true;
       } catch (e) { return false; }    // localStorage quota exceeded
@@ -370,10 +847,10 @@
       const fsd = desktopFS();
       if (fsd) {
         return fsd.autosaveRead().then(info => {
-          if (!info || !info.data) return null;
-          return deserialize(JSON.parse(info.data)).then(d => ({
-            project: d.project, palette: d.palette, time: new Date(info.time)
-          }));
+          if (!info) return null;
+          const load = info.kind === 'finca' ? openFinca({ autosave: true }, true)
+            : deserialize(JSON.parse(info.data));
+          return load.then(d => ({ project: d.project, palette: d.palette, time: new Date(info.time) }));
         }).catch(() => null);
       }
       const raw = localStorage.getItem(AUTO_KEY);
@@ -382,6 +859,16 @@
       return deserialize(JSON.parse(raw)).then(d => ({
         project: d.project, palette: d.palette, time: t ? new Date(Number(t)) : null
       })).catch(() => null);
+    },
+    // one autosave snapshot from File > Recover Autosave (desktop)
+    readAutosaveSnapshot(name) {
+      const fsd = desktopFS();
+      if (!fsd) return Promise.reject(new Error('no file system'));
+      if (/\.finca$/.test(name)) return openFinca({ history: name }, true);
+      return fsd.autosaveHistoryRead(name).then(txt => {
+        if (!txt) throw new Error('snapshot is missing');
+        return deserialize(JSON.parse(txt));
+      });
     },
     clearAutosave() {
       const fsd = desktopFS();

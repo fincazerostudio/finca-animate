@@ -204,7 +204,7 @@
           wrap.appendChild(el('div', { class: 'launcher-empty' }, [
             el('div', { class: 'launcher-empty__title', text: 'No recent projects yet' }),
             el('div', { class: 'launcher-empty__sub brand-mono',
-              text: 'Make one — or open a .otoon file' })
+              text: 'Make one — or open a .finca file' })
           ]));
         }
         return wrap;
@@ -218,7 +218,7 @@
 
     _recentCard(r, idx) {
       const base = (r.path || '').split(/[\\/]/).pop() || 'project';
-      const stem = base.replace(/\.otoon$/i, '');
+      const stem = base.replace(/\.(finca|otoon)$/i, '');
       const dir = (r.path || '').slice(0, -base.length).replace(/[\\/]+$/, '');
       const card = el('button', {
         class: 'launcher-card' + (r.missing ? ' is-missing' : ''),
@@ -312,7 +312,7 @@
         '</div>' +
         '<div class="launcher-action__body">' +
           '<div class="launcher-action__title">Open Project…</div>' +
-          '<div class="launcher-action__sub brand-mono">Browse for a .otoon file · Ctrl + O</div>' +
+          '<div class="launcher-action__sub brand-mono">Browse for a .finca or .otoon file · Ctrl + O</div>' +
         '</div>' +
         '<div class="launcher-action__arrow brand-mono" aria-hidden="true">→</div>';
 

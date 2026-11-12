@@ -3,6 +3,7 @@
 const { app, BrowserWindow, Menu, shell, dialog, ipcMain, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const FincaZip = require('./finca-zip.js');
 
 const isDev = process.argv.includes('--dev') || !app.isPackaged;
 let win = null;
@@ -12,16 +13,16 @@ let updater = null;
 let splashAt = 0;          // when the splash became visible (0 = not shown yet)
 let appReady = false;      // renderer has signalled it finished booting
 let revealed = false;
-let pendingOpenFile = null; // .otoon path the app was launched to open
+let pendingOpenFile = null; // project path (.finca / .otoon) the app was launched to open
 
 // Window icon: Windows takes the multi-size .ico; Linux/macOS need a PNG.
 const WINDOW_ICON = path.join(__dirname, '..', 'assets',
   process.platform === 'win32' ? 'icon.ico' : path.join('icons', '512x512.png'));
 
-// Pull a .otoon path out of a process argv list (file association / drag-onto-exe).
+// Pull a project path out of a process argv list (file association / drag-onto-exe).
 function argvFile(argv) {
   for (const arg of (argv || [])) {
-    if (typeof arg === 'string' && /\.otoon$/i.test(arg)) {
+    if (typeof arg === 'string' && /\.(finca|otoon)$/i.test(arg)) {
       try { if (fs.existsSync(arg)) return arg; } catch (e) { /* ignore */ }
     }
   }
@@ -492,28 +493,161 @@ function setupUpdateIpc() {
 
 /* ---- IPC bridge for the renderer (version, updates, file IO, pen window) ---- */
 /* ---- crash-safe file writes ----
-   Write to a temp file in the same folder, flush it to disk, keep the old
-   file as <name>.bak, then rename the temp over the target. A crash or power
-   loss leaves either the old file or the new one, never a half-written one. */
-function writeFileAtomic(file, data, keepBak) {
-  const dir = path.dirname(file);
-  const tmp = path.join(dir, '.' + path.basename(file) + '.tmp-' + process.pid);
-  const fd = fs.openSync(tmp, 'w');
-  try { fs.writeFileSync(fd, data, 'utf8'); fs.fsyncSync(fd); }
-  finally { fs.closeSync(fd); }
+   A project is always written to a temp file in the same folder, flushed to
+   disk, and then renamed over the target. A crash or power loss leaves
+   either the old file or the new one, never a half-written one. The
+   previous version stays next to it as <name>.bak (a hard link to the old
+   file where the file system allows it, so it costs no copy). */
+function sleepSync(ms) {
+  try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); } catch (e) { /* ignore */ }
+}
+function replaceAtomic(tmp, file, keepBak) {
   try {
-    if (keepBak && fs.existsSync(file)) fs.copyFileSync(file, file + '.bak');
-    fs.renameSync(tmp, file);
+    if (keepBak && fs.existsSync(file)) {
+      const bak = file + '.bak';
+      try { fs.rmSync(bak, { force: true }); fs.linkSync(file, bak); }
+      catch (e) { fs.copyFileSync(file, bak); }
+    }
+    // Windows: the indexer, antivirus or a sync client may hold the target
+    // for a moment, which fails the rename with EPERM / EBUSY. Retry briefly.
+    for (let attempt = 0; ; attempt++) {
+      try { fs.renameSync(tmp, file); break; }
+      catch (e) {
+        if (attempt >= 6 || !/^(EPERM|EBUSY|EACCES)$/.test(e.code || '')) throw e;
+        sleepSync(40 << attempt);
+      }
+    }
   } catch (e) { try { fs.unlinkSync(tmp); } catch (_) { /* ignore */ } throw e; }
 }
 
 /* ---- which files the renderer may touch ----
-   The renderer only ever reads and writes .otoon projects. Reads: any .otoon.
-   Writes: only .otoon paths that reached us this session through a native
-   dialog, the command line / file association, or a successful open. */
+   Reads: .finca and .otoon projects (absolute paths only). The renderer
+   never gets a path into a project's inside: an open .finca is a numbered
+   handle, and entries are asked for by name (scene.json, drawings/...,
+   media/..., thumbnail.png).
+   Writes: only .finca files, and only paths that reached us this session
+   through the native Save dialog, a successful open, or as a NEW file next
+   to one of those (Save Increment). .otoon files are never written. */
 const writableFiles = new Set();
-const isProject = f => typeof f === 'string' && /\.otoon$/i.test(f) && path.isAbsolute(f);
-function allowWrite(f) { if (isProject(f)) writableFiles.add(path.resolve(f)); }
+const isFinca = f => typeof f === 'string' && /\.finca$/i.test(f) && path.isAbsolute(f);
+const isOtoon = f => typeof f === 'string' && /\.otoon$/i.test(f) && path.isAbsolute(f);
+const isProject = f => isFinca(f) || isOtoon(f);
+function allowWrite(f) { if (isFinca(f)) writableFiles.add(path.resolve(f)); }
+
+const ENTRY_NAME = /^(scene\.json|thumbnail\.png|(drawings|media)(\/[A-Za-z0-9_][A-Za-z0-9_.\-]*)+)$/;
+const validEntry = n => typeof n === 'string' && n.length < 300 && ENTRY_NAME.test(n) && !/\.\./.test(n);
+
+/* ---- open .finca files (handles) ---- */
+const fincaHandles = new Map();     // id -> { id, path, entries, size, mtimeMs }
+let fincaSeq = 0;
+function fincaStat(fd) { const s = fs.fstatSync(fd); return { size: s.size, mtimeMs: s.mtimeMs }; }
+function fincaHandleFor(file) {
+  const full = path.resolve(file);
+  for (const h of fincaHandles.values()) if (h.path === full) return h;
+  const h = { id: ++fincaSeq, path: full, entries: null, size: -1, mtimeMs: -1 };
+  fincaHandles.set(h.id, h);
+  return h;
+}
+// Run fn(fd, entries) on a handle's file. The table of contents is re-read
+// if the file changed on disk since we last looked (replaced by another
+// program, restored from a backup...).
+function withFinca(h, fn) {
+  const fd = fs.openSync(h.path, 'r');
+  try {
+    const st = fincaStat(fd);
+    if (!h.entries || st.size !== h.size || st.mtimeMs !== h.mtimeMs) {
+      h.entries = FincaZip.readDirectory(fd);
+      h.size = st.size; h.mtimeMs = st.mtimeMs;
+    }
+    return fn(fd, h.entries);
+  } finally { fs.closeSync(fd); }
+}
+function fincaOpen(file) {
+  const h = fincaHandleFor(file);
+  h.entries = null;                                   // always a fresh look on open
+  const scene = withFinca(h, (fd, entries) => {
+    const e = entries.get('scene.json');
+    if (!e) throw new Error('not a Finca Animate project (no scene inside)');
+    return FincaZip.readEntry(fd, e).toString('utf8');
+  });
+  return { ok: true, id: h.id, scene, time: h.mtimeMs };
+}
+function fincaRead(id, names) {
+  const h = fincaHandles.get(id);
+  if (!h || !Array.isArray(names)) return [];
+  return withFinca(h, (fd, entries) => names.map(n => {
+    const e = validEntry(n) ? entries.get(n) : null;
+    if (!e) return null;
+    try { const b = FincaZip.readEntry(fd, e); return new Uint8Array(b.buffer, b.byteOffset, b.byteLength); }
+    catch (err) { console.error('finca: ' + err.message); return null; }
+  }));
+}
+// Write a whole .finca: scene + entries. An entry is fresh bytes (`data`),
+// fresh text (`text`), or `from: { id, name }` = copied untouched out of an
+// open project (usually the previous version of this same file).
+function fincaWrite(file, payload, keepBak) {
+  if (!payload || typeof payload.scene !== 'string' || !Array.isArray(payload.entries))
+    throw new Error('bad project data');
+  const dir = path.dirname(file);
+  const tmp = path.join(dir, '.' + path.basename(file) + '.tmp-' + process.pid);
+  const sources = new Map();          // handle id -> { fd, entries }
+  const source = id => {
+    if (sources.has(id)) return sources.get(id);
+    const h = fincaHandles.get(id);
+    if (!h) throw new Error('a drawing refers to a project that is no longer open');
+    const fd = fs.openSync(h.path, 'r');
+    const st = fincaStat(fd);
+    if (!h.entries || st.size !== h.size || st.mtimeMs !== h.mtimeMs) {
+      h.entries = FincaZip.readDirectory(fd); h.size = st.size; h.mtimeMs = st.mtimeMs;
+    }
+    const s = { fd, entries: h.entries };
+    sources.set(id, s);
+    return s;
+  };
+  let written = 0, copied = 0, entries, stat;
+  const out = fs.openSync(tmp, 'w');
+  try {
+    try {
+      const w = FincaZip.createWriter(out);
+      w.add('scene.json', Buffer.from(payload.scene, 'utf8'), true);
+      for (const e of payload.entries) {
+        if (!e || !validEntry(e.name) || e.name === 'scene.json') throw new Error('bad entry name ' + JSON.stringify(e && e.name));
+        if (e.from) {
+          let s = null;
+          try { s = source(e.from.id); } catch (err) { if (!e.optional) throw err; }
+          const src = s && validEntry(e.from.name) ? s.entries.get(e.from.name) : null;
+          if (!src) {
+            if (e.optional) continue;
+            throw new Error('drawing "' + e.from.name + '" is missing from its project file');
+          }
+          w.copy(s.fd, src, e.name); copied++;
+        } else if (typeof e.text === 'string') {
+          w.add(e.name, Buffer.from(e.text, 'utf8'), true); written++;
+        } else if (e.data && e.data.byteLength != null) {
+          const d = e.data;
+          w.add(e.name, Buffer.from(d.buffer || d, d.byteOffset || 0, d.byteLength), /\.json$/.test(e.name)); written++;
+        } else throw new Error('entry "' + e.name + '" has no content');
+      }
+      entries = w.finish();
+      fs.fsyncSync(out);
+    } finally {
+      fs.closeSync(out);
+      for (const s of sources.values()) try { fs.closeSync(s.fd); } catch (e) { /* ignore */ }
+    }
+    // test hook: die between "new file complete" and "new file in place"
+    if (process.env.OPENTOON_TEST_CRASH === 'before-rename') process.kill(process.pid, 'SIGKILL');
+  } catch (e) { try { fs.unlinkSync(tmp); } catch (_) { /* ignore */ } throw e; }
+  replaceAtomic(tmp, file, keepBak);
+  // temp files left behind by a run that crashed mid-save are of no use now
+  try {
+    const stale = '.' + path.basename(file) + '.tmp-';
+    for (const n of fs.readdirSync(dir)) if (n.startsWith(stale)) fs.rmSync(path.join(dir, n), { force: true });
+  } catch (e) { /* ignore */ }
+  const h = fincaHandleFor(file);
+  stat = fs.statSync(file);
+  h.entries = entries; h.size = stat.size; h.mtimeMs = stat.mtimeMs;
+  return { ok: true, id: h.id, written, copied, bytes: stat.size };
+}
 
 function setupIpc() {
   // normal launches answer "no render job" (render mode registers its own first)
@@ -523,14 +657,15 @@ function setupIpc() {
   setupUpdateIpc();
 
   /* ---- project file IO ---- */
+  const FILTER_FINCA = { name: 'Finca Animate Project (*.finca)', extensions: ['finca'] };
   ipcMain.handle('opentoon:save-dialog', async (_e, defaultPath) => {
     const r = await dialog.showSaveDialog(win, {
       title: 'Save Project',
-      defaultPath: defaultPath || 'untitled.otoon',
-      filters: [{ name: 'Animation Project (.otoon)', extensions: ['otoon'] }]
+      defaultPath: (typeof defaultPath === 'string' && defaultPath) || 'untitled.finca',
+      filters: [FILTER_FINCA]
     });
     if (r.canceled || !r.filePath) return null;
-    const f = /\.otoon$/i.test(r.filePath) ? r.filePath : r.filePath + '.otoon';
+    const f = /\.finca$/i.test(r.filePath) ? r.filePath : r.filePath.replace(/\.otoon$/i, '') + '.finca';
     allowWrite(f);
     return f;
   });
@@ -538,70 +673,113 @@ function setupIpc() {
     const r = await dialog.showOpenDialog(win, {
       title: 'Open Project',
       properties: ['openFile'],
-      filters: [{ name: 'Animation Project (.otoon)', extensions: ['otoon'] }]
+      filters: [
+        { name: 'All projects (*.finca, *.otoon)', extensions: ['finca', 'otoon'] },
+        FILTER_FINCA,
+        { name: 'OpenToon Project (*.otoon)', extensions: ['otoon'] }
+      ]
     });
     return (r.canceled || !r.filePaths.length) ? null : r.filePaths[0];
   });
+  // .otoon (one JSON file): read-only. Opening one never makes it writable;
+  // saving goes to a new .finca through the Save dialog.
   ipcMain.handle('opentoon:read-file', (_e, file) => {
-    if (!isProject(file)) return { ok: false, error: 'only .otoon projects can be opened' };
-    try {
-      const data = fs.readFileSync(file, 'utf8');
-      allowWrite(file);                       // opened it: may save over it
-      return { ok: true, data };
-    } catch (e) { return { ok: false, error: e.message }; }
-  });
-  // Also allowed: a NEW .otoon next to a project we may already write
-  // (File > Save Increment makes scene_002.otoon) -- never over an unknown file.
-  const newSibling = f => !fs.existsSync(f) &&
-    [...writableFiles].some(w => path.dirname(w) === path.dirname(path.resolve(f)));
-  ipcMain.handle('opentoon:write-file', (_e, file, data) => {
-    if (isProject(file) && !writableFiles.has(path.resolve(file)) && newSibling(file)) allowWrite(file);
-    if (!isProject(file) || !writableFiles.has(path.resolve(file)))
-      return { ok: false, error: 'not allowed to write ' + file + ' (save it through the Save dialog)' };
-    try { writeFileAtomic(file, data, true); return { ok: true }; }
+    if (!isOtoon(file)) return { ok: false, error: 'only project files can be opened' };
+    try { return { ok: true, data: fs.readFileSync(file, 'utf8') }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   /* ---- crash-safe autosave to the userData folder (no quota limit) ---- */
-  const autosaveFile = () => path.join(app.getPath('userData'), 'autosave.otoon');
+  const autosaveFile = () => path.join(app.getPath('userData'), 'autosave.finca');
+  const legacyAutosave = () => path.join(app.getPath('userData'), 'autosave.otoon');
   // History: at most one snapshot per 5 minutes, the newest 8 kept, so a bad
   // edit that got autosaved can still be rolled back.
   const historyDir = () => path.join(app.getPath('userData'), 'autosave-history');
   const HISTORY_EVERY = 5 * 60 * 1000, HISTORY_KEEP = 8;
+  const HISTORY_NAME = /^autosave-\d+\.(finca|otoon)$/;
   const historyList = () => {
     try {
-      return fs.readdirSync(historyDir()).filter(n => /^autosave-\d+\.otoon$/.test(n))
+      return fs.readdirSync(historyDir()).filter(n => HISTORY_NAME.test(n))
         .map(n => ({ name: n, time: +n.match(/\d+/)[0], size: fs.statSync(path.join(historyDir(), n)).size }))
         .sort((a, b) => b.time - a.time);
     } catch (e) { return []; }
   };
-  ipcMain.handle('opentoon:autosave-write', (_e, data) => {
+  const snapshotAutosave = () => {
+    const list = historyList(), now = Date.now();
+    if (list.length && now - list[0].time < HISTORY_EVERY) return;
+    fs.mkdirSync(historyDir(), { recursive: true });
+    const snap = path.join(historyDir(), 'autosave-' + now + '.finca');
+    // the autosave file is only ever replaced, never changed in place, so a
+    // hard link is a free and safe snapshot
+    try { fs.linkSync(autosaveFile(), snap); } catch (e) { fs.copyFileSync(autosaveFile(), snap); }
+    for (const old of historyList().slice(HISTORY_KEEP))
+      try { fs.unlinkSync(path.join(historyDir(), old.name)); } catch (e) { /* ignore */ }
+  };
+
+  // What a renderer-supplied target means: a project path, the autosave
+  // file, or one autosave snapshot (by name, never by path).
+  const resolveTarget = target => {
+    if (typeof target === 'string') return isFinca(target) ? target : null;
+    if (target && target.autosave === true) return autosaveFile();
+    if (target && typeof target.history === 'string' && /^autosave-\d+\.finca$/.test(target.history))
+      return path.join(historyDir(), target.history);
+    return null;
+  };
+  ipcMain.handle('opentoon:finca-open', (_e, target) => {
+    const file = resolveTarget(target);
+    if (!file) return { ok: false, error: 'only .finca projects can be opened this way' };
     try {
-      writeFileAtomic(autosaveFile(), data, false);
-      const list = historyList(), now = Date.now();
-      if (!list.length || now - list[0].time >= HISTORY_EVERY) {
-        fs.mkdirSync(historyDir(), { recursive: true });
-        fs.copyFileSync(autosaveFile(), path.join(historyDir(), 'autosave-' + now + '.otoon'));
-        for (const old of historyList().slice(HISTORY_KEEP))
-          try { fs.unlinkSync(path.join(historyDir(), old.name)); } catch (e) { /* ignore */ }
-      }
-      return true;
-    } catch (e) { return false; }
+      const r = fincaOpen(file);
+      if (typeof target === 'string') allowWrite(file);          // opened it: may save over it
+      return r;
+    } catch (e) { return { ok: false, error: e.message }; }
   });
+  ipcMain.handle('opentoon:finca-read', (_e, id, names) => {
+    try { return fincaRead(id, names); } catch (e) { return (names || []).map(() => null); }
+  });
+  ipcMain.on('opentoon:finca-read-sync', (e, id, name) => {
+    try { e.returnValue = fincaRead(id, [name])[0] || null; } catch (err) { e.returnValue = null; }
+  });
+  ipcMain.handle('opentoon:finca-close', (_e, id) => { fincaHandles.delete(id); return true; });
+  // Also allowed: a NEW .finca next to a project we may already write
+  // (File > Save Increment makes scene_002.finca) -- never over an unknown file.
+  const newSibling = f => !fs.existsSync(f) &&
+    [...writableFiles].some(w => path.dirname(w) === path.dirname(path.resolve(f)));
+  ipcMain.handle('opentoon:finca-write', (_e, target, payload) => {
+    try {
+      if (target && target.autosave === true) {
+        fs.mkdirSync(path.dirname(autosaveFile()), { recursive: true });
+        const r = fincaWrite(autosaveFile(), payload, false);
+        try { snapshotAutosave(); } catch (e) { /* history is best effort */ }
+        return r;
+      }
+      const file = typeof target === 'string' ? target : null;
+      if (isFinca(file) && !writableFiles.has(path.resolve(file)) && newSibling(file)) allowWrite(file);
+      if (!isFinca(file) || !writableFiles.has(path.resolve(file)))
+        return { ok: false, error: 'not allowed to write ' + file + ' (save it through the Save dialog)' };
+      return fincaWrite(path.resolve(file), payload, true);
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+
   ipcMain.handle('opentoon:autosave-history', () => historyList());
+  // older builds autosaved one JSON file; those are still offered for recovery
   ipcMain.handle('opentoon:autosave-history-read', (_e, name) => {
     if (typeof name !== 'string' || !/^autosave-\d+\.otoon$/.test(name)) return null;
     try { return fs.readFileSync(path.join(historyDir(), name), 'utf8'); } catch (e) { return null; }
   });
+  // { kind: 'finca', time } | { kind: 'otoon', time, data } | null (newest wins)
   ipcMain.handle('opentoon:autosave-read', () => {
     try {
-      const f = autosaveFile();
-      if (!fs.existsSync(f)) return null;
-      return { data: fs.readFileSync(f, 'utf8'), time: fs.statSync(f).mtimeMs };
+      const stat = f => { try { return fs.statSync(f).mtimeMs; } catch (e) { return 0; } };
+      const tf = stat(autosaveFile()), to = stat(legacyAutosave());
+      if (!tf && !to) return null;
+      if (tf >= to) return { kind: 'finca', time: tf };
+      return { kind: 'otoon', time: to, data: fs.readFileSync(legacyAutosave(), 'utf8') };
     } catch (e) { return null; }
   });
   ipcMain.handle('opentoon:autosave-clear', () => {
-    try { fs.unlinkSync(autosaveFile()); } catch (e) { /* already gone */ }
+    for (const f of [autosaveFile(), legacyAutosave()])
+      try { fs.unlinkSync(f); } catch (e) { /* already gone */ }
     return true;
   });
 
@@ -614,7 +792,7 @@ function setupIpc() {
     } catch (e) { return { ok: false, error: e && e.message }; }
   });
 
-  /* ---- file the app was launched to open (double-click a .otoon) ---- */
+  /* ---- file the app was launched to open (double-click a project) ---- */
   ipcMain.handle('opentoon:pending-file', () => {
     const f = pendingOpenFile;
     pendingOpenFile = null;
@@ -663,13 +841,13 @@ function setupIpc() {
 
 
 /* ---------------- command-line batch render ----------------
-   opentoon-studio --render scene.otoon [-o out.mp4] [--scale 0.5]
+   opentoon-studio --render scene.finca [-o out.mp4] [--scale 0.5]
                    [--from N] [--to N] [--frame N] [--no-audio]
    Boots the real app in a hidden window with a throwaway profile, runs the
    same exporters as File > Export, writes the file and exits:
    0 = written, 1 = render failed, 2 = bad arguments. */
 const RENDER_USAGE = [
-  'Usage: opentoon-studio --render <scene.otoon> [options]',
+  'Usage: opentoon-studio --render <scene.finca | scene.otoon> [options]',
   '',
   '  -o, --out <file>   output file; the extension picks the format:',
   '                     .mp4 .webm .gif .zip (PNG sequence) .png (one frame)',
@@ -717,7 +895,7 @@ function parseRenderArgs(argv) {
   if (!job.input) throw new Error('no scene given');
   job.input = path.resolve(job.input);
   if (!fs.existsSync(job.input)) throw new Error('scene not found: ' + job.input);
-  if (!job.out) job.out = job.input.replace(/\.otoon$/i, '') + '.mp4';
+  if (!job.out) job.out = job.input.replace(/\.(finca|otoon)$/i, '') + '.mp4';
   job.out = path.resolve(job.out);
   const ext = path.extname(job.out).toLowerCase();
   const formats = { '.mp4': 'mp4', '.webm': 'webm', '.gif': 'gif', '.zip': 'sequence', '.png': 'frame' };
@@ -793,7 +971,7 @@ if (renderJob && renderJob.failed) {
   app.exit(0);
 } else if (renderJob) {
   runRender(renderJob);
-// Single-instance: a second launch (e.g. double-clicking another .otoon)
+// Single-instance: a second launch (e.g. double-clicking another project)
 // hands its file to the already-running window instead of opening twice.
 } else if (!app.requestSingleInstanceLock()) {
   app.quit();

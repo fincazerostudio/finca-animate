@@ -22,7 +22,7 @@ contextBridge.exposeInMainWorld('OpenToonDesktop', {
   // tell the main process the app has finished booting (dismisses the splash)
   signalReady: () => ipcRenderer.send('app:ready'),
   splashProgress: (pct, label) => ipcRenderer.send('app:loading', { pct: pct, label: label }),
-  // a .otoon double-clicked while the app is already running
+  // a project double-clicked while the app is already running
   onOpenFile: cb => ipcRenderer.on('opentoon:open-file', (_e, p) => cb(p)),
   // secondary "pen display" drawing window (see src/pencast.js)
   openPenWindow: (opts) => ipcRenderer.invoke('opentoon:pen-open', opts),
@@ -53,9 +53,15 @@ contextBridge.exposeInMainWorld('OpenToonDesktop', {
   fs: {
     saveDialog: (defaultPath) => ipcRenderer.invoke('opentoon:save-dialog', defaultPath),
     openDialog: () => ipcRenderer.invoke('opentoon:open-dialog'),
+    // .otoon (the older one-file JSON format): read only
     readFile: (file) => ipcRenderer.invoke('opentoon:read-file', file),
-    writeFile: (file, data) => ipcRenderer.invoke('opentoon:write-file', file, data),
-    autosaveWrite: (data) => ipcRenderer.invoke('opentoon:autosave-write', data),
+    // .finca: open -> { ok, id, scene }, then ask for entries by name.
+    // target = a path, { autosave: true } or { history: '<snapshot name>' }
+    fincaOpen: (target) => ipcRenderer.invoke('opentoon:finca-open', target),
+    fincaRead: (id, names) => ipcRenderer.invoke('opentoon:finca-read', id, names),
+    fincaReadSync: (id, name) => ipcRenderer.sendSync('opentoon:finca-read-sync', id, name),
+    fincaWrite: (target, payload) => ipcRenderer.invoke('opentoon:finca-write', target, payload),
+    fincaClose: (id) => ipcRenderer.invoke('opentoon:finca-close', id),
     autosaveRead: () => ipcRenderer.invoke('opentoon:autosave-read'),
     autosaveClear: () => ipcRenderer.invoke('opentoon:autosave-clear'),
     autosaveHistory: () => ipcRenderer.invoke('opentoon:autosave-history'),

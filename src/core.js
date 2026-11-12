@@ -155,6 +155,25 @@ window.OT = window.OT || {};
   }
   OT.Emitter = Emitter;
 
+  /* ---- PNG encoding ----
+     canvas.toBlob() encodes in the page's idle time; while the app is busy
+     (playback, drawing, a big save) each call can wait about a second.
+     OffscreenCanvas.convertToBlob() is not tied to idle time, so drawings
+     are encoded through a snapshot of the canvas instead. Same PNG pixels. */
+  function encodePNG(canvas) {
+    if (typeof OffscreenCanvas === 'function' && typeof createImageBitmap === 'function') {
+      return createImageBitmap(canvas, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' }).then(bmp => {
+        const oc = new OffscreenCanvas(bmp.width, bmp.height);
+        const x = oc.getContext('bitmaprenderer');
+        if (!x) { bmp.close(); throw new Error('no bitmaprenderer'); }
+        x.transferFromImageBitmap(bmp);
+        return oc.convertToBlob({ type: 'image/png' });
+      }).catch(() => new Promise(res => canvas.toBlob(res, 'image/png')));
+    }
+    return new Promise(res => canvas.toBlob(res, 'image/png'));
+  }
+  OT.encodePNG = encodePNG;
+
   /* ============================== Cel ============================== */
   // A Cel is a single drawing (raster surface) belonging to a layer.
   let _celSeq = 0;
@@ -173,6 +192,18 @@ window.OT = window.OT || {};
       this._canvas = null;
       this._ctx = null;
       this._used = 0;                   // access clock (least recently used first)
+      this._rev = 0;                    // bumped by dirty() on every edit
+      // Raster cels can also live without a surface, as a stored copy of
+      // their pixels that is decoded when the surface is next needed:
+      //   _file  { id, name }  an entry in an open .finca project file
+      //   _png   Uint8Array    encoded PNG kept in memory
+      // Each is only trusted while its stamp matches _stamp, which moves on
+      // every edit (dirty) and every time the drawing context is handed out.
+      // Vector cels use _file too, to say which entry holds their strokes.
+      this._stamp = 0;
+      this._png = null; this._pngStamp = -1;
+      this._file = null; this._fileStamp = -1;
+      this._loading = null;             // background decode in flight
       // No `willReadFrequently` — the hint forces a CPU-side backing store,
       // which means every `drawImage(cel.canvas, …)` from the composite
       // path triggers a CPU→GPU upload each frame. With 5 layers × 1080p
@@ -201,11 +232,25 @@ window.OT = window.OT || {};
     set canvas(c) {
       this._canvas = c || null;
       this._ctx = c ? c.getContext('2d') : null;
+      // a replaced surface is a different drawing: forget the stored copies
+      if (this.kind !== 'vector') { this._png = null; this._file = null; this._stamp++; }
     }
     get ctx() {
       if (!this._ctx) this._alloc();
       this._used = ++_celClock;
+      // whoever asks for the context may draw: stored copies are no longer trusted
+      this._stamp++;
+      if (this._png) this._png = null;
       return this._ctx;
+    }
+    // Raster: the surface is missing but a stored copy of the drawing exists.
+    get parked() { return this.kind !== 'vector' && !this._canvas && !!(this._png || this._file); }
+    // Raster: a stored copy matches the surface exactly, so the surface can
+    // be dropped (release) or skipped when saving.
+    get parkable() {
+      if (this.kind === 'vector') return true;
+      if (!this._canvas) return true;
+      return (!!this._png && this._pngStamp === this._stamp) || (!!this._file && this._fileStamp === this._stamp);
     }
     // True when the full-resolution surface currently exists in memory.
     get hasCanvas() { return !!this._canvas; }
@@ -215,6 +260,7 @@ window.OT = window.OT || {};
       c.width = this.w; c.height = this.h;
       this._canvas = c;
       this._ctx = c.getContext('2d');
+      if (this.kind !== 'vector' && (this._png || this._file)) this._decodeNow();
       if (this.kind === 'vector' && OT.Vector && this.strokes &&
           (this.strokes.length || (this.eraserMarks && this.eraserMarks.length))) {
         // Re-creating a cache is not an edit: keep the thumbnail and the
@@ -224,11 +270,85 @@ window.OT = window.OT || {};
         this.thumbDirty = td; this._rev = rev;
       }
     }
-    // Free the surface of a vector cel. Its strokes are the source of truth
-    // and the next access re-rasterises them. Returns the bytes freed.
-    // Raster cels are never released.
+    // Stored PNG bytes of a parked raster cel (from memory or the project file).
+    _storedBytes() {
+      if (this._png) return this._png;
+      return (this._file && OT.IO && OT.IO.readEntrySync) ? OT.IO.readEntrySync(this._file) : null;
+    }
+    // Safety net: something needs the pixels right now and the background
+    // load (load()) has not happened. Decode on the spot so no caller can
+    // ever read a blank surface for a drawing that exists.
+    _decodeNow() {
+      try {
+        const bytes = this._storedBytes();
+        if (!bytes) throw new Error('its data could not be read from the project file');
+        const img = OT.PNGSync.decode(bytes);
+        if (img.width !== this._canvas.width || img.height !== this._canvas.height) {
+          this.w = img.width; this.h = img.height;
+          this._canvas.width = img.width; this._canvas.height = img.height;
+        }
+        this._ctx.putImageData(new ImageData(img.data, img.width, img.height), 0, 0);
+        Cel.stats.syncDecodes++;
+      } catch (e) {
+        Cel.stats.failed++;
+        console.error('Drawing ' + this.num + ' could not be loaded: ' + (e && e.message));
+      }
+    }
+    // Decode a parked raster cel in the background (off the main thread).
+    // Resolves when the surface is ready; a no-op for anything else.
+    load() {
+      if (!this.parked) return Promise.resolve(this);
+      if (this._loading) return this._loading;
+      const bytes = this._png ? Promise.resolve(this._png)
+        : (OT.IO && OT.IO.readEntry ? OT.IO.readEntry(this._file) : Promise.resolve(null));
+      this._loading = bytes
+        .then(b => b ? createImageBitmap(new Blob([b], { type: 'image/png' }), { colorSpaceConversion: 'none' }) : null)
+        .then(bmp => {
+          this._loading = null;
+          if (!bmp) return this;                      // unreadable: _decodeNow reports it on access
+          if (this.parked) {                          // not loaded or cleared in the meantime
+            const c = document.createElement('canvas');
+            c.width = bmp.width; c.height = bmp.height;
+            this.w = bmp.width; this.h = bmp.height;
+            const x = c.getContext('2d');
+            x.drawImage(bmp, 0, 0);
+            this._canvas = c; this._ctx = x;
+            this._used = ++_celClock;
+            Cel.stats.loads++;
+            if (Cel.onLoad) Cel.onLoad(this);
+          }
+          bmp.close();
+          return this;
+        }, () => { this._loading = null; return this; });
+      return this._loading;
+    }
+    // Encode a raster cel's pixels to PNG bytes kept in memory, so its
+    // surface can be released. Resolves true when the cel is parkable.
+    stash() {
+      if (this.kind === 'vector' || !this._canvas) return Promise.resolve(true);
+      if (this.parkable) return Promise.resolve(true);
+      if (this._stashing) return this._stashing;
+      const stamp = this._stamp, cv = this._canvas;
+      this._stashing = encodePNG(cv)
+        .then(b => b.arrayBuffer())
+        .then(buf => {
+          this._stashing = null;
+          if (this._stamp !== stamp || this._canvas !== cv) return false;   // drawn on meanwhile
+          this._png = new Uint8Array(buf); this._pngStamp = stamp;
+          Cel.stats.encodes++;
+          return true;
+        }, () => { this._stashing = null; return false; });
+      return this._stashing;
+    }
+    // Free the surface. A vector cel's strokes are the source of truth and
+    // the next access re-rasterises them. A raster cel is only released
+    // while a stored copy matches it exactly (parkable); the next access
+    // decodes that copy. Returns the bytes freed.
     release() {
-      if (this.kind !== 'vector' || !this._canvas) return 0;
+      if (!this._canvas) return 0;
+      if (this.kind !== 'vector' && !this.parkable) return 0;
+      // while parked, _png (if any) must be the drawing: drop an outdated one
+      if (this._png && this._pngStamp !== this._stamp) this._png = null;
       const bytes = this.canvasBytes;
       // shrinking first hands the backing store back right away instead of
       // waiting for the garbage collector
@@ -236,7 +356,18 @@ window.OT = window.OT || {};
       this._canvas = null; this._ctx = null;
       return bytes;
     }
-    dirty() { this.thumbDirty = true; this._rev = (this._rev || 0) + 1; }
+    dirty() {
+      this.thumbDirty = true;
+      this._rev = (this._rev || 0) + 1;
+      const old = this._stamp;
+      this._stamp = old + 1;
+      if (this.kind === 'vector') return;
+      if (!this._canvas) {
+        // nothing was drawn (there is no surface): the stored copy is still the drawing
+        if (this._pngStamp === old) this._pngStamp = this._stamp;
+        if (this._fileStamp === old) this._fileStamp = this._stamp;
+      } else if (this._png) this._png = null;         // out of date now: don't keep it around
+    }
     // Vector cels: re-render all strokes onto the raster cache canvas.
     // O(N) over cel.strokes — only call when the cel composition has
     // genuinely changed (strokes deleted, modified, reordered, restored
@@ -289,6 +420,7 @@ window.OT = window.OT || {};
     }
     clear() {
       if (this.kind === 'vector') { this.strokes = []; this.eraserMarks = []; }
+      else { this._png = null; this._file = null; }   // blank now: nothing stored to bring back
       if (this._ctx) this._ctx.clearRect(0, 0, this.w, this.h);
       this.dirty();
     }
@@ -323,6 +455,18 @@ window.OT = window.OT || {};
     getThumb(tw, th) {
       if (this.thumb && !this.thumbDirty &&
         this.thumb.width === tw && this.thumb.height === th) return this.thumb;
+      // A parked raster cel: don't decode the full drawing for a thumbnail.
+      // Decode a small copy in the background and show the old (or an empty)
+      // thumbnail until it arrives.
+      if (this.parked) {
+        if (!(this.thumb && this.thumb.width === tw && this.thumb.height === th)) {
+          const t = document.createElement('canvas');
+          t.width = tw; t.height = th;
+          this.thumb = t;
+        }
+        this._loadThumb(tw, th);
+        return this.thumb;
+      }
       // A vector cel without a surface borrows one just for this thumbnail
       // and gives it back, so a timeline full of thumbnails doesn't pin
       // every drawing in memory.
@@ -340,10 +484,31 @@ window.OT = window.OT || {};
       this.thumb = c; this.thumbDirty = false;
       return c;
     }
+    _loadThumb(tw, th) {
+      if (this._thumbLoading) return;
+      const rev = this._rev;
+      const bytes = this._png ? Promise.resolve(this._png)
+        : (OT.IO && OT.IO.readEntry ? OT.IO.readEntry(this._file) : Promise.resolve(null));
+      this._thumbLoading = bytes
+        .then(b => b ? createImageBitmap(new Blob([b], { type: 'image/png' }),
+          { resizeWidth: tw, resizeHeight: th, resizeQuality: 'high', colorSpaceConversion: 'none' }) : null)
+        .then(bmp => {
+          this._thumbLoading = null;
+          if (!bmp) return;
+          if (this._rev === rev && this.thumb && this.thumb.width === tw && this.thumb.height === th) {
+            const x = this.thumb.getContext('2d');
+            x.clearRect(0, 0, tw, th);
+            x.drawImage(bmp, 0, 0, tw, th);
+            this.thumbDirty = false;
+            if (Cel.onLoad) Cel.onLoad(this);
+          }
+          bmp.close();
+        }, () => { this._thumbLoading = null; });
+    }
     isBlank() {
       if (!this._canvas) {
-        if (this.kind !== 'vector') return true;      // never drawn on
-        if (!this.strokes.length) return true;
+        if (this.kind !== 'vector') { if (!this._png && !this._file) return true; }   // never drawn on
+        else if (!this.strokes.length) return true;
       }
       const d = this.ctx.getImageData(0, 0, this.w, this.h).data;
       for (let i = 3; i < d.length; i += 4) if (d[i] !== 0) return false;
@@ -351,6 +516,10 @@ window.OT = window.OT || {};
     }
     toDataURL() { return this.canvas.toDataURL('image/png'); }
   }
+  // counters for the console, the tests and the performance budget
+  Cel.stats = { loads: 0, syncDecodes: 0, encodes: 0, failed: 0 };
+  // called when a background load finished (the app re-renders)
+  Cel.onLoad = null;
   OT.Cel = Cel;
 
   /* ============================== Layer ============================== */

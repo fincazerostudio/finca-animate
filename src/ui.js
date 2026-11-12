@@ -648,7 +648,8 @@
           const tx = thumb.getContext('2d');
           tx.fillStyle = a.project.bg; tx.fillRect(0, 0, 60, 44);
           const cel = layer.celAt(a.frame);
-          if (cel) tx.drawImage(cel.canvas, 0, 0, 60, 44);
+          // a drawing still loading shows its small thumbnail, never a full decode
+          if (cel) tx.drawImage(cel.parked ? cel.getThumb(60, 44) : cel.canvas, 0, 0, 60, 44);
           else if (layer.type === 'video' && layer.videoEl && layer.videoEl.readyState >= 2)
             try { tx.drawImage(layer.videoEl, 0, 0, 60, 44); } catch (e) {}
         }
@@ -1684,8 +1685,8 @@
       if (!fsd || !fsd.autosaveHistory) { this.status('Autosave history is available in the desktop app'); return; }
       const [latest, hist] = await Promise.all([fsd.autosaveRead(), fsd.autosaveHistory()]);
       const rows = [];
-      if (latest) rows.push({ label: 'Latest autosave', time: latest.time, load: async () => latest.data });
-      for (const h of hist || []) rows.push({ label: 'Snapshot', time: h.time, load: () => fsd.autosaveHistoryRead(h.name) });
+      if (latest) rows.push({ label: 'Latest autosave', time: latest.time, load: () => OT.IO.readAutosave() });
+      for (const h of hist || []) rows.push({ label: 'Snapshot', time: h.time, load: () => OT.IO.readAutosaveSnapshot(h.name) });
       if (!rows.length) { this.modal('Recover Autosave', el('div', { text: 'No autosaves yet.' })); return; }
       const list = el('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '320px', overflow: 'auto' } });
       let close = null;
@@ -1694,9 +1695,8 @@
           text: r.label + ' — ' + new Date(r.time).toLocaleString() });
         b.addEventListener('click', async () => {
           try {
-            const txt = await r.load();
-            if (!txt) throw new Error('could not read it');
-            const d = await OT.IO.deserialize(JSON.parse(txt));
+            const d = await r.load();
+            if (!d || !d.project) throw new Error('could not read it');
             a.loadProjectData(d);
             a.projectPath = null; a.dirty = true;
             this.status('Recovered autosave from ' + new Date(r.time).toLocaleString() + ' — save it to keep it');
@@ -2284,8 +2284,11 @@
         if (cel) {
           const canvas = el('canvas', { width: 96, height: 54, 'aria-hidden': 'true' });
           const scale = Math.min(96 / cel.w, 54 / cel.h);
-          canvas.getContext('2d').drawImage(cel.canvas,
+          const tw = Math.max(1, Math.round(cel.w * scale)), th = Math.max(1, Math.round(cel.h * scale));
+          const draw = () => canvas.getContext('2d').drawImage(cel.parked ? cel.getThumb(tw, th) : cel.canvas,
             (96 - cel.w * scale) / 2, (54 - cel.h * scale) / 2, cel.w * scale, cel.h * scale);
+          draw();
+          if (cel.parked) cel.load().then(() => { canvas.getContext('2d').clearRect(0, 0, 96, 54); draw(); });
           button.appendChild(canvas);
         } else button.appendChild(el('span', { class: 'drawing-empty', text: '∅', 'aria-hidden': 'true' }));
         button.appendChild(el('span', { text: num ? 'Drawing ' + num : 'Empty frame' }));
@@ -2567,7 +2570,6 @@
           const app = this.app;
           if (app && app.dirty && app.projectPath && OT.IO && OT.IO.writeProjectTo) {
             OT.IO.writeProjectTo(app, app.projectPath)
-              .then(() => { app.dirty = false; })
               .catch(() => { try { OT.IO.autosave(app); } catch (_) {} })
               .then(proceed);
             return;
@@ -2685,8 +2687,7 @@
                 });
               return;
             }
-            const def = (app.project.name || 'untitled').replace(/[^\w\-]+/g, '_') + '.otoon';
-            fsd.saveDialog(def).then(p => {
+            fsd.saveDialog(app._saveName()).then(p => {
               if (!p) return;          // cancelled — stay put
               OT.IO.writeProjectTo(app, p)
                 .then(saved => {

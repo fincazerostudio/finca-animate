@@ -154,6 +154,14 @@
   OT.DEFAULT_BRUSHES = DEFAULT_BRUSHES;
 
   class App extends OT.Emitter {
+    // `dirty` = there are edits that are not saved yet. Every change bumps
+    // _dirtySeq, so a save that ran in the background only clears the flag
+    // if nothing was edited while it was running.
+    get dirty() { return !!this._dirty; }
+    set dirty(v) {
+      this._dirty = !!v;
+      if (v) this._dirtySeq = (this._dirtySeq || 0) + 1;
+    }
     constructor() {
       super();
       OT.app = this;
@@ -163,8 +171,9 @@
       this.color = '#222222';
       this.dirty = false;
       this.celClipboard = null;
-      this.projectPath = null;   // path of the open .otoon file (desktop)
-      this.recentFiles = [];     // recently opened / saved .otoon paths (desktop)
+      this.projectPath = null;   // path of the open .finca file (desktop)
+      this._importedFrom = null; // .otoon this scene was imported from (never written to)
+      this.recentFiles = [];     // recently opened / saved project paths (desktop)
       this.sidebarWidth = 0;     // user-dragged sidebar width (0 = CSS default)
       this.timelineHeight = 0;   // user-dragged timeline height (0 = CSS default)
       this.tlNamesWidth = 0;     // user-dragged width of the timeline Layers column
@@ -253,7 +262,17 @@
       this.colorPanel = new OT.ColorPanel(this, document.getElementById('colorpanel'));
       this.timeline = new OT.Timeline(this);
       this.penCast = new OT.PenCast(this);   // secondary pen-display window
-      this.celMemory = OT.CelMemory.attach(this);   // vector-cel surface budget
+      this.celMemory = OT.CelMemory.attach(this);   // cel surface budget
+      // a drawing (or its thumbnail) finished loading in the background: redraw
+      OT.Cel.onLoad = () => {
+        if (this._celLoadRaf) return;
+        this._celLoadRaf = requestAnimationFrame(() => {
+          this._celLoadRaf = 0;
+          this.emit('render');
+          if (this.timeline) this.timeline.render();
+          if (this.ui && this.ui._refreshLayers) this.ui._refreshLayers();
+        });
+      };
 
       this._installKeys();
       this._installGuards();
@@ -286,11 +305,13 @@
           // writes back to that path instead of (or as well as) the
           // crash-recovery copy. Keeps the artist's file current without
           // requiring a manual Ctrl+S.
+          // (Both clear `dirty` themselves once the write has finished,
+          // unless something was edited in the meantime.)
+          const desktop = !!(window.OpenToonDesktop && window.OpenToonDesktop.fs);
           if (this.projectPath && OT.IO.writeProjectTo) {
             OT.IO.writeProjectTo(this, this.projectPath)
-              .then(() => { this.dirty = false; })
-              .catch(() => { if (OT.IO.autosave(this)) this.dirty = false; });
-          } else if (OT.IO.autosave(this)) {
+              .catch(() => { OT.IO.autosave(this); });
+          } else if (OT.IO.autosave(this) && !desktop) {
             this.dirty = false;
           }
         }
@@ -300,7 +321,7 @@
       this.ui.status('Welcome to Finca Animate - press B to start drawing');
     }
 
-    // On launch: open a double-clicked .otoon if there is one; otherwise
+    // On launch: open a double-clicked project if there is one; otherwise
     // show the OpenToon start screen (recent / new / open / templates /
     // restore-autosave). The default project is already loaded behind the
     // overlay, so dismissing the launcher leaves a usable blank scene.
@@ -339,7 +360,7 @@
     _openPath(path) {
       if (!path) return;
       OT.IO.readProjectFrom(path)
-        .then(d => { this.loadProjectData(d); this.projectPath = path; this._addRecent(path); })
+        .then(d => this._opened(path, d))
         .catch(e => this.ui.status('Could not open that project — ' + e.message));
     }
 
@@ -421,6 +442,25 @@
       return U.clamp(p.min + (p.max - p.min) * Math.pow(raw, p.gamma), 0, 1);
     }
 
+    // A project file was read: show it. A .otoon is an import: it has no
+    // file of its own to save back to, so the first save asks for a .finca
+    // name and the .otoon is left exactly as it was.
+    _opened(path, d) {
+      this.loadProjectData(d);
+      if (d.imported) {
+        this._importedFrom = path;
+        if (this.ui && !this._renderMode)
+          this.ui.status('Opened an OpenToon project — saving creates a .finca file next to it and leaves the original untouched');
+      } else this.projectPath = path;
+      this._addRecent(path);
+    }
+    // Suggested file name for the Save dialog.
+    _saveName() {
+      if (this.projectPath) return this.projectPath;
+      if (this._importedFrom) return this._importedFrom.replace(/\.otoon$/i, '') + '.finca';
+      return (this.project.name || 'untitled').replace(/[^\w\-]+/g, '_') + '.finca';
+    }
+
     /* ---------------- recent files (desktop) ---------------- */
     _addRecent(path) {
       if (!path) return;
@@ -434,7 +474,7 @@
       const fsd = window.OpenToonDesktop && window.OpenToonDesktop.fs;
       if (!fsd) return;
       OT.IO.readProjectFrom(path)
-        .then(d => { this.loadProjectData(d); this.projectPath = path; this._addRecent(path); })
+        .then(d => this._opened(path, d))
         .catch(e => {
           this.ui.status('Could not open that project — ' + e.message);
           this.recentFiles = this.recentFiles.filter(p => p !== path);
@@ -652,6 +692,15 @@
       f = U.clamp(f | 0, 0, this.project.frameCount - 1);
       if (!fromPlayback && this.tools) this.tools.flush();
       this.frame = f;
+      // bring the drawings of the next frames in before they are shown
+      if (OT.IO && OT.IO.loadFrame) {
+        const dir = (fromPlayback && this.playback && this.playback._dir < 0) ? -1 : 1;
+        const last = this.project.frameCount - 1;
+        for (let d = 1; d <= (fromPlayback ? 4 : 1); d++) {
+          const n = f + dir * d;
+          if (n >= 0 && n <= last) OT.IO.loadFrame(this, n);
+        }
+      }
       if (!fromPlayback) this._syncVideoLayers();
       // When the user scrubs during playback, re-seek the audio so it stays
       // in sync with the new frame instead of carrying on from the old position.
@@ -2013,6 +2062,7 @@
       this.history.clear();
       this.dirty = false;
       this.projectPath = null;
+      this._importedFrom = null;
       this.colorPanel._renderSwatches();
       this.emitAll();
       // Apply any saved workspace state (stage zoom, timeline zoom, current
@@ -2098,14 +2148,19 @@
       if (!fsd) {
         OT.IO.saveProject(this);
         this.ui.status('Project saved');
-        this.ui.showSaveToast((this.project.name || 'untitled') + '.otoon');
+        this.ui.showSaveToast((this.project.name || 'untitled') + '.finca');
         return;
       }
       const write = path => {
-        OT.IO.writeProjectTo(this, path)
+        OT.IO.writeProjectTo(this, path, { thumbnail: true })
           .then(p => {
             this.projectPath = p;
             this._newerSource = false;            // it's our own file now
+            if (this._importedFrom) {             // the .finca takes the .otoon's place in Recent
+              const old = this._importedFrom;
+              this.recentFiles = this.recentFiles.filter(r => r !== old);
+              this._importedFrom = null;
+            }
             this._addRecent(p);
             this.ui.status('Saved ' + p);
             this.ui.showSaveToast(p);
@@ -2122,9 +2177,7 @@
       }
       // silent save-in-place once the project has a file; dialog otherwise
       if (this.projectPath && !saveAs) { write(this.projectPath); return; }
-      const def = this.projectPath ||
-        (this.project.name || 'untitled').replace(/[^\w\-]+/g, '_') + '.otoon';
-      fsd.saveDialog(def).then(p => { if (p) write(p); });
+      fsd.saveDialog(this._saveName()).then(p => { if (p) write(p); });
     }
     openProject() {
       const fsd = window.OpenToonDesktop && window.OpenToonDesktop.fs;
@@ -2132,24 +2185,24 @@
         fsd.openDialog().then(path => {
           if (!path) return;
           OT.IO.readProjectFrom(path)
-            .then(d => { this.loadProjectData(d); this.projectPath = path; this._addRecent(path); })
+            .then(d => this._opened(path, d))
             .catch(e => this.ui.status('Open failed: ' + e.message));
         });
         return;
       }
-      this._pickFile('.otoon,application/json', file => {
+      this._pickFile('.finca,.otoon,application/json', file => {
         OT.IO.openProjectFile(this, file)
           .then(d => this.loadProjectData(d))
           .catch(e => this.ui.status('Open failed: ' + e.message));
       });
     }
-    // Work out the next numbered file name, e.g. scene.otoon -> scene_002.otoon.
+    // Work out the next numbered file name, e.g. scene.finca -> scene_002.finca.
     _nextIncrementPath(path) {
-      const m = path.match(/^(.*?)(?:_(\d+))?\.otoon$/i);
+      const m = path.match(/^(.*?)(?:_(\d+))?\.finca$/i);
       let base, num;
       if (m) { base = m[1]; num = m[2] ? parseInt(m[2], 10) + 1 : 2; }
-      else { base = path.replace(/\.otoon$/i, ''); num = 2; }
-      return base + '_' + String(num).padStart(3, '0') + '.otoon';
+      else { base = path.replace(/\.(finca|otoon)$/i, ''); num = 2; }
+      return base + '_' + String(num).padStart(3, '0') + '.finca';
     }
     // Save a numbered copy and continue working in it (desktop only).
     saveIncrement() {
@@ -2157,7 +2210,7 @@
       if (!fsd) { this.ui.status('Incremental save is a desktop feature'); return; }
       if (!this.projectPath) { this.saveProject(true); return; }   // no file yet -> Save As
       const next = this._nextIncrementPath(this.projectPath);
-      OT.IO.writeProjectTo(this, next)
+      OT.IO.writeProjectTo(this, next, { thumbnail: true })
         .then(p => { this.projectPath = p; this._addRecent(p); this.ui.status('Saved increment ' + p); })
         .catch(e => this.ui.status('Incremental save failed: ' + e.message));
     }
