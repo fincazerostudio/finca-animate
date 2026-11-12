@@ -43,7 +43,7 @@ const tests = {
   },
   'githubRepoFromPackage reads build.publish'() {
     assert.deepStrictEqual(githubRepoFromPackage(require('../package.json')),
-      { owner: 'fincazerostudio', repo: 'opentoon' });
+      { owner: 'fincazerostudio', repo: 'finca-animate' });
     assert.strictEqual(githubRepoFromPackage({ build: {} }), null);
   },
   'githubRepoFromUpdateConfig reads app-update.yml'() {

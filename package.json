@@ -1,6 +1,6 @@
 {
   "name": "opentoon",
-  "version": "1.1.0-beta.1",
+  "version": "1.1.0-beta.2",
   "description": "Finca Animate: an open-source 2D animation studio for Linux and Windows, inspired by Toon Boom Harmony. Based on OpenToon Studio.",
   "main": "electron/main.js",
   "desktopName": "opentoon-studio.desktop",
@@ -14,7 +14,7 @@
     "test:electron": "node tests/electron-smoke.cjs",
     "test:render": "node tests/render-cli.cjs",
     "test:files": "node tests/phase0.cjs",
-    "test": "node tests/update-check.cjs && node tests/browsertest.cjs && node tests/vector.cjs && node tests/visual.cjs && node tests/pen.cjs && node tests/features2.cjs && node tests/easing.cjs && node tests/lighttable.cjs && node tests/transform.cjs && node tests/pegs.cjs && node tests/combined.cjs && node tests/quickwins.cjs && node tests/palettes.cjs && node tests/curves.cjs",
+    "test": "node tests/update-check.cjs && node tests/browsertest.cjs && node tests/vector.cjs && node tests/visual.cjs && node tests/pen.cjs && node tests/features2.cjs && node tests/easing.cjs && node tests/lighttable.cjs && node tests/transform.cjs && node tests/pegs.cjs && node tests/combined.cjs && node tests/quickwins.cjs && node tests/palettes.cjs && node tests/curves.cjs && node tests/substitution.cjs && node tests/drawing-memory.cjs",
     "publish:linux": "electron-builder --linux --publish always"
   },
   "keywords": [
@@ -119,7 +119,7 @@
       {
         "provider": "github",
         "owner": "fincazerostudio",
-        "repo": "opentoon",
+        "repo": "finca-animate",
         "releaseType": "release"
       }
     ]

@@ -158,14 +158,21 @@ window.OT = window.OT || {};
   /* ============================== Cel ============================== */
   // A Cel is a single drawing (raster surface) belonging to a layer.
   let _celSeq = 0;
+  let _celClock = 0;
   class Cel {
     constructor(num, w, h, kind) {
       this.num = num;
       this.uid = 'c' + (++_celSeq);
       this.w = w; this.h = h;
       this.kind = kind || 'raster';     // 'raster' | 'vector'
-      this.canvas = document.createElement('canvas');
-      this.canvas.width = w; this.canvas.height = h;
+      // The full-resolution surface (about 8 MB at 1080p) is allocated
+      // lazily on first use of `canvas` / `ctx`, not here. A vector cel's
+      // surface is only a cache of its strokes: it is rasterised on demand
+      // and OT.CelMemory may release it again (see release()). Raster cels
+      // keep their surface once allocated: it IS the drawing.
+      this._canvas = null;
+      this._ctx = null;
+      this._used = 0;                   // access clock (least recently used first)
       // No `willReadFrequently` — the hint forces a CPU-side backing store,
       // which means every `drawImage(cel.canvas, …)` from the composite
       // path triggers a CPU→GPU upload each frame. With 5 layers × 1080p
@@ -174,7 +181,6 @@ window.OT = window.OT || {};
       // GPU→GPU copies. Fill flood + isBlank still call getImageData; that
       // now incurs a sync GPU→CPU readback per call, but those are
       // user-initiated one-shots and not in any hot loop.
-      this.ctx = this.canvas.getContext('2d');
       if (this.kind === 'vector') {
         this.strokes = [];
         // Non-destructive eraser marks. Each entry: { x, y, r }. Applied as
@@ -187,6 +193,49 @@ window.OT = window.OT || {};
       this.thumb = null;
       this.thumbDirty = true;
     }
+    get canvas() {
+      if (!this._canvas) this._alloc();
+      this._used = ++_celClock;
+      return this._canvas;
+    }
+    set canvas(c) {
+      this._canvas = c || null;
+      this._ctx = c ? c.getContext('2d') : null;
+    }
+    get ctx() {
+      if (!this._ctx) this._alloc();
+      this._used = ++_celClock;
+      return this._ctx;
+    }
+    // True when the full-resolution surface currently exists in memory.
+    get hasCanvas() { return !!this._canvas; }
+    get canvasBytes() { return this._canvas ? this._canvas.width * this._canvas.height * 4 : 0; }
+    _alloc() {
+      const c = document.createElement('canvas');
+      c.width = this.w; c.height = this.h;
+      this._canvas = c;
+      this._ctx = c.getContext('2d');
+      if (this.kind === 'vector' && OT.Vector && this.strokes &&
+          (this.strokes.length || (this.eraserMarks && this.eraserMarks.length))) {
+        // Re-creating a cache is not an edit: keep the thumbnail and the
+        // revision counter (raster-bounds caches key off it) untouched.
+        const td = this.thumbDirty, rev = this._rev;
+        OT.Vector.renderCel(this);
+        this.thumbDirty = td; this._rev = rev;
+      }
+    }
+    // Free the surface of a vector cel. Its strokes are the source of truth
+    // and the next access re-rasterises them. Returns the bytes freed.
+    // Raster cels are never released.
+    release() {
+      if (this.kind !== 'vector' || !this._canvas) return 0;
+      const bytes = this.canvasBytes;
+      // shrinking first hands the backing store back right away instead of
+      // waiting for the garbage collector
+      this._canvas.width = 0; this._canvas.height = 0;
+      this._canvas = null; this._ctx = null;
+      return bytes;
+    }
     dirty() { this.thumbDirty = true; this._rev = (this._rev || 0) + 1; }
     // Vector cels: re-render all strokes onto the raster cache canvas.
     // O(N) over cel.strokes — only call when the cel composition has
@@ -194,7 +243,10 @@ window.OT = window.OT || {};
     // from undo, frame loaded). For the common case of "added one new
     // stroke on top", use appendStroke() instead — that's O(1).
     rebuild() {
-      if (this.kind === 'vector' && OT.Vector) OT.Vector.renderCel(this);
+      if (this.kind !== 'vector' || !OT.Vector) return;
+      // no surface yet: it is rasterised from the strokes on first access
+      if (!this._canvas) { this.dirty(); return; }
+      OT.Vector.renderCel(this);
     }
     // Fast path: draw a single newly-committed stroke onto cel.canvas
     // without re-rasterising the whole cel. Turns the cost of committing
@@ -204,6 +256,9 @@ window.OT = window.OT || {};
     appendStroke(stroke) {
       if (this.kind !== 'vector' || !OT.Vector) return;
       if (!stroke || stroke._lassoHidden) return;
+      // No surface yet: the stroke is already in this.strokes and is drawn
+      // when the surface is created (drawing it now would draw it twice).
+      if (!this._canvas) { this.dirty(); return; }
       // Fills sit UNDER line strokes in renderCel's ordering. Appending
       // a fill on top would render it in the wrong z-order, so use the
       // full rebuild path for fills.
@@ -234,7 +289,7 @@ window.OT = window.OT || {};
     }
     clear() {
       if (this.kind === 'vector') { this.strokes = []; this.eraserMarks = []; }
-      this.ctx.clearRect(0, 0, this.w, this.h);
+      if (this._ctx) this._ctx.clearRect(0, 0, this.w, this.h);
       this.dirty();
     }
     getImageData() { return this.ctx.getImageData(0, 0, this.w, this.h); }
@@ -268,6 +323,10 @@ window.OT = window.OT || {};
     getThumb(tw, th) {
       if (this.thumb && !this.thumbDirty &&
         this.thumb.width === tw && this.thumb.height === th) return this.thumb;
+      // A vector cel without a surface borrows one just for this thumbnail
+      // and gives it back, so a timeline full of thumbnails doesn't pin
+      // every drawing in memory.
+      const borrowed = this.kind === 'vector' && !this._canvas;
       const c = this.thumb && this.thumb.width === tw ? this.thumb : document.createElement('canvas');
       c.width = tw; c.height = th;
       const x = c.getContext('2d');
@@ -277,10 +336,15 @@ window.OT = window.OT || {};
       x.imageSmoothingQuality = 'high';
       x.clearRect(0, 0, tw, th);
       x.drawImage(this.canvas, 0, 0, tw, th);
+      if (borrowed) this.release();
       this.thumb = c; this.thumbDirty = false;
       return c;
     }
     isBlank() {
+      if (!this._canvas) {
+        if (this.kind !== 'vector') return true;      // never drawn on
+        if (!this.strokes.length) return true;
+      }
       const d = this.ctx.getImageData(0, 0, this.w, this.h).data;
       for (let i = 3; i < d.length; i += 4) if (d[i] !== 0) return false;
       return true;
