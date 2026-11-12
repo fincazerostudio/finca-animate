@@ -1,4 +1,4 @@
-# OpenToon Roadmap
+# Finca Animate Roadmap
 
 Goal: a 2D animation studio you can trust with real projects, then parity
 with Toon Boom Harmony where it matters for character animation.
