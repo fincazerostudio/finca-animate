@@ -128,15 +128,20 @@ async function mainWindow(app) {
     check('playback advances frames and stops', play.mid !== play.start && !play.playing, play);
 
     // ---- save / reopen through the real main-process file IO ----
-    const file = path.join(tmp, 'smoke test.otoon');
+    const file = path.join(tmp, 'smoke test.finca');
     await app.evaluate(({ dialog }, f) => {
       dialog.showSaveDialog = async () => ({ canceled: false, filePath: f });
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [f] });
     }, file);
     await page.evaluate(() => window.OT.app.saveProject(true));
-    await page.waitForTimeout(800);
+    for (let i = 0; i < 50 && !fs.existsSync(file); i++) await page.waitForTimeout(200);
     let saved = null;
-    try { saved = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { /* fail below */ }
+    try {
+      const Z = require('../electron/finca-zip.js');
+      const fd = fs.openSync(file, 'r');
+      try { saved = JSON.parse(Z.readEntry(fd, Z.readDirectory(fd).get('scene.json')).toString('utf8')); }
+      finally { fs.closeSync(fd); }
+    } catch (e) { /* fail below */ }
     check('project saved to disk via native IO', !!(saved && saved.layers && saved.layers.length), saved ? { layers: saved.layers.length, bytes: fs.statSync(file).size } : null);
     await page.evaluate(() => { const a = window.OT.app; a.activeLayer().celAt(0).strokes.length = 0; a.dirty = false; });
     await page.evaluate(() => window.OT.app.openProject());

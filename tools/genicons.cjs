@@ -3,11 +3,13 @@
  *   node tools/genicons.cjs              # .ico files + Linux PNGs
  *   node tools/genicons.cjs --png-only   # Linux PNGs only
  *
- * Rasterises the app-tile and .otoon document marks with playwright-core
- * (already a devDependency) and packs the PNGs into multi-resolution .ico
- * files with a tiny inline ICO encoder -- no extra dependency needed.
- * Outputs assets/icon.ico, assets/otoon-file.ico and the Linux icon set
- * assets/icons/<N>x<N>.png (the layout electron-builder expects). */
+ * Rasterises the app-tile and the .finca / .otoon document marks with
+ * playwright-core (already a devDependency) and packs the PNGs into
+ * multi-resolution .ico files with a tiny inline ICO encoder -- no extra
+ * dependency needed. Outputs assets/icon.ico, assets/finca-file.ico,
+ * assets/otoon-file.ico, the Linux icon set assets/icons/<N>x<N>.png (the
+ * layout electron-builder expects) and the Linux file-type icons
+ * assets/icons/mimetypes/<N>x<N>.png. */
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -31,17 +33,21 @@ const APP_ICON =
   '<g transform="translate(46,46) scale(0.82)">' + MARK + '</g>' +
   '</svg>';
 
-/* .otoon project file: a document with a folded corner + extension band */
-const FILE_ICON =
+/* project file: a document with a folded corner + extension band */
+const fileIcon = (label, band, size) =>
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">' +
   '<path d="M58 26 H162 L206 70 V222 q0 8 -8 8 H58 q-8 0 -8 -8 V34 q0 -8 8 -8 Z" ' +
   'fill="#272b32" stroke="#080a0c" stroke-width="2.5"/>' +
   '<path d="M162 26 L206 70 H162 Z" fill="#3a3f48"/>' +
   '<g transform="translate(128,116) scale(0.42) translate(-100,-100)">' + MARK + '</g>' +
-  '<rect x="40" y="170" width="176" height="40" rx="4" fill="#4a9fd4"/>' +
-  '<text x="128" y="198" font-family="Segoe UI, sans-serif" font-size="25" font-weight="700" ' +
-  'fill="#f7f1e5" text-anchor="middle" letter-spacing="3">.OTOON</text>' +
+  '<rect x="40" y="170" width="176" height="40" rx="4" fill="' + band + '"/>' +
+  '<text x="128" y="198" font-family="Segoe UI, sans-serif" font-size="' + size + '" font-weight="700" ' +
+  'fill="#f7f1e5" text-anchor="middle" letter-spacing="3">' + label + '</text>' +
   '</svg>';
+/* .otoon: the older one-file format (still opens) */
+const FILE_ICON = fileIcon('.OTOON', '#4a9fd4', 25);
+/* .finca: the native project format */
+const FINCA_FILE_ICON = fileIcon('.FINCA', '#3f8f55', 25);
 
 /* pack [{size, buf(PNG)}] into a PNG-embedded .ico (Windows Vista+) */
 function encodeIco(pngs) {
@@ -80,7 +86,7 @@ async function rasterize(browser, svg, size) {
 (async () => {
   const browser = await launch();
   if (!PNG_ONLY) {
-    for (const job of [[APP_ICON, 'icon.ico'], [FILE_ICON, 'otoon-file.ico']]) {
+    for (const job of [[APP_ICON, 'icon.ico'], [FINCA_FILE_ICON, 'finca-file.ico'], [FILE_ICON, 'otoon-file.ico']]) {
       const pngs = [];
       for (const s of SIZES) pngs.push(await rasterize(browser, job[0], s));
       const ico = encodeIco(pngs);
@@ -95,9 +101,17 @@ async function rasterize(browser, svg, size) {
     fs.writeFileSync(path.join(iconDir, s + 'x' + s + '.png'), png.buf);
   }
   console.log('wrote assets/icons/  (sizes ' + LINUX_SIZES.join('/') + ')');
+  const mimeDir = path.join(iconDir, 'mimetypes');
+  fs.mkdirSync(mimeDir, { recursive: true });
+  for (const s of LINUX_SIZES) {
+    const png = await rasterize(browser, FINCA_FILE_ICON, s);
+    fs.writeFileSync(path.join(mimeDir, s + 'x' + s + '.png'), png.buf);
+  }
+  console.log('wrote assets/icons/mimetypes/  (.finca file icon)');
   await browser.close();
   if (PNG_ONLY) return;
   fs.writeFileSync(path.join(ROOT, 'assets', 'brand', 'finca-animate-icon-master.svg'), APP_ICON + '\n');
   fs.writeFileSync(path.join(ROOT, 'assets', 'brand', 'finca-animate-file-icon.svg'), FILE_ICON + '\n');
+  fs.writeFileSync(path.join(ROOT, 'assets', 'brand', 'finca-animate-finca-file-icon.svg'), FINCA_FILE_ICON + '\n');
   console.log('wrote master SVGs to assets/brand/');
 })().catch(e => { console.error('genicons failed:', e); process.exitCode = 1; });

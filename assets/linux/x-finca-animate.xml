@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Finca Animate project files (.finca) for Linux file managers.
+     Install: copy to ~/.local/share/mime/packages/ (or /usr/share/mime/packages/)
+     and run update-mime-database on that mime folder. The magic matches the
+     uncompressed "mimetype" entry every .finca starts with (as ODF / EPUB do),
+     so the type is recognised even without the extension. -->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-finca-animate">
+    <comment>Finca Animate Project</comment>
+    <sub-class-of type="application/zip"/>
+    <generic-icon name="application-x-finca-animate"/>
+    <glob pattern="*.finca"/>
+    <magic priority="70">
+      <match type="string" value="PK\003\004" offset="0">
+        <match type="string" value="mimetypeapplication/x-finca-animate" offset="30"/>
+      </match>
+    </magic>
+  </mime-type>
+</mime-info>

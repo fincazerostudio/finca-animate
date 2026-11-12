@@ -13,8 +13,8 @@
     "check-update": "node tools/check-update.cjs",
     "test:electron": "node tests/electron-smoke.cjs",
     "test:render": "node tests/render-cli.cjs",
-    "test:files": "node tests/phase0.cjs",
-    "test": "node tests/update-check.cjs && node tests/browsertest.cjs && node tests/vector.cjs && node tests/visual.cjs && node tests/pen.cjs && node tests/features2.cjs && node tests/easing.cjs && node tests/lighttable.cjs && node tests/transform.cjs && node tests/pegs.cjs && node tests/combined.cjs && node tests/quickwins.cjs && node tests/palettes.cjs && node tests/curves.cjs && node tests/substitution.cjs && node tests/drawing-memory.cjs",
+    "test:files": "node tests/phase0.cjs && node tests/finca-format.cjs",
+    "test": "node tests/update-check.cjs && node tests/finca-zip.cjs && node tests/browsertest.cjs && node tests/vector.cjs && node tests/visual.cjs && node tests/pen.cjs && node tests/features2.cjs && node tests/easing.cjs && node tests/lighttable.cjs && node tests/transform.cjs && node tests/pegs.cjs && node tests/combined.cjs && node tests/quickwins.cjs && node tests/palettes.cjs && node tests/curves.cjs && node tests/substitution.cjs && node tests/drawing-memory.cjs",
     "publish:linux": "electron-builder --linux --publish always"
   },
   "keywords": [
@@ -99,9 +99,17 @@
     },
     "fileAssociations": [
       {
+        "ext": "finca",
+        "name": "Finca Animate Project",
+        "description": "Finca Animate animation project",
+        "icon": "assets/finca-file.ico",
+        "mimeType": "application/x-finca-animate",
+        "role": "Editor"
+      },
+      {
         "ext": "otoon",
-        "name": "Animation Project (.otoon)",
-        "description": "Finca Animate / OpenToon animation project",
+        "name": "OpenToon Project (.otoon)",
+        "description": "OpenToon animation project (opens in Finca Animate)",
         "icon": "assets/otoon-file.ico",
         "mimeType": "application/x-opentoon"
       }

@@ -92,6 +92,48 @@ const u32be = (b, o) => b.readUInt32BE(o);
   check('mp4 (default output name): written, or a clear "not supported" error', mp4ok || mp4unsupported, r.out);
   if (mp4unsupported) console.log('     note: this Electron build cannot record MP4; .webm works');
 
+  // 2b. the same scene as a .finca (built here from the .otoon with the
+  //     container code, so the CLI is also checked against a file the app
+  //     did not write itself)
+  const Z = require('../electron/finca-zip.js');
+  const fscene = path.join(tmp, 'scene.finca');
+  {
+    const data = JSON.parse(json);
+    const fd = fs.openSync(fscene, 'w');
+    const w = Z.createWriter(fd);
+    const entries = [];
+    for (const l of data.layers) for (const n in l.cels) {
+      const c = l.cels[n];
+      if (c.k === 'v') {
+        const name = 'drawings/' + l.id + '/' + n + '.json';
+        entries.push([name, Buffer.from(JSON.stringify({ strokes: c.strokes, eraserMarks: c.eraserMarks || [] })), true]);
+        l.cels[n] = { k: 'v', src: name, w: data.width, h: data.height };
+      } else {
+        const name = 'drawings/' + l.id + '/' + n + '.png';
+        entries.push([name, Buffer.from(c.png.split(',')[1], 'base64'), false]);
+        l.cels[n] = { k: 'r', src: name, w: data.width, h: data.height };
+      }
+    }
+    data.format = 'finca'; data.version = 3;
+    w.add('scene.json', Buffer.from(JSON.stringify(data)), true);
+    for (const [name, buf, deflate] of entries) w.add(name, buf, deflate);
+    w.finish();
+    fs.closeSync(fd);
+  }
+  r = render(['--render', fscene, '-o', out('finca.png'), '--frame', '12']);
+  const fb = fs.existsSync(out('finca.png')) ? fs.readFileSync(out('finca.png')) : Buffer.alloc(0);
+  const fpx = await page.evaluate(async (dataUrl) => {
+    const img = new Image(); img.src = dataUrl; await img.decode();
+    const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+    const x = c.getContext('2d'); x.drawImage(img, 0, 0);
+    const at = (X, Y) => Array.from(x.getImageData(X, Y, 1, 1).data.slice(0, 3));
+    return { red: at(100, 180), movedBlue: at(560, 170), oldBlue: at(360, 170) };
+  }, 'data:image/png;base64,' + fb.toString('base64'));
+  check('.finca input: renders the same frame as the .otoon', r.code === 0 && JSON.stringify(fpx) === JSON.stringify(px), { out: r.out, fpx, px });
+  r = render(['--render', fscene, '-o', out('finca.gif'), '--scale', '0.5']);
+  b = fs.existsSync(out('finca.gif')) ? fs.readFileSync(out('finca.gif')) : Buffer.alloc(0);
+  check('.finca input: gif with all 12 frames', r.code === 0 && (b.toString('latin1').match(/\x21\xF9\x04/g) || []).length === 12, r.out);
+
   // 3. errors and help
   r = render(['--render', path.join(tmp, 'missing.otoon')]);
   check('missing scene: exit 2 + message', r.code === 2 && /scene not found/.test(r.out), r);
