@@ -2029,8 +2029,21 @@
           const cv = OT.IO.renderFrame(this, opts.from, opts.outW, opts.outH);
           out = await new Promise(r => cv.toBlob(r, 'image/png'));
         } else if (job.format === 'gif') out = await E.gif(this, opts, onProgress);
-        else if (job.format === 'mp4') out = await E.mp4(this, opts, onProgress);
-        else if (job.format === 'webm') out = await E.webm(this, opts, onProgress);
+        else if (job.codec) {
+          // frame-accurate through ffmpeg when it is there; .mp4 / .webm can
+          // fall back to the real-time recorder
+          const info = await E.videoFormats();
+          const f = info.formats[job.codec];
+          if (f && f.ok) {
+            const r = await E.offline(this, opts, onProgress, { format: job.codec, out: job.out, alpha: !!job.alpha });
+            await R.written(r);
+            return;
+          }
+          if (job.format === 'mov' || job.alpha || job.codec === 'h265')
+            throw new Error(info.found ? 'this ffmpeg cannot encode ' + job.codec : 'ffmpeg was not found (install it or set FINCA_FFMPEG)');
+          R.progress('ffmpeg not found: recording in real time instead (install ffmpeg for frame-accurate video)');
+          out = job.format === 'mp4' ? await E.mp4(this, opts, onProgress) : await E.webm(this, opts, onProgress);
+        }
         else out = await E.sequence(this, opts, onProgress);
         const bytes = out instanceof Blob ? new Uint8Array(await out.arrayBuffer()) : new Uint8Array(out);
         await R.done(bytes);

@@ -438,6 +438,23 @@ const setSavePath = (app, p) => app.evaluate(({ dialog }, f) => {
   check('reference layer: locked by default, visible on stage, left out of exports', ext.ref === true && ext.locked === true && ext.exportPanel[0] > 200 && ext.exportPanel[1] > 200 && ext.exportPanel[2] > 200 && ext.stagePanel[1] < 50, ext);
   check('storyboard block and reference flag survive a save untouched', ext.sbAgain === JSON.stringify(storyboard) && ext.refAgain, ext.sbAgain);
   check('unchanged outside drawings are copied with their names kept', ext.save.encoded === 0 && entB.has('drawings/board/1-panel.png') && entB.has('drawings/anim/1-x.png') && entB.get('drawings/board/1-panel.png').method === 8, [...entB.keys()]);
+  // File > Export QuickTime (PNG) through the real dialog code: the board
+  // panel (reference layer) must not be in the video
+  const { spawnSync } = require('child_process');
+  if (spawnSync('ffmpeg', ['-version']).status === 0) {
+    const movOut = path.join(tmp, 'gui-export.mov');
+    await app.evaluate(({ dialog }, p) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath: p }); }, movOut.replace(/\.mov$/, ''));
+    const gui = await page.evaluate(async () => {
+      const a = window.OT.app;
+      await a.ui._runOfflineExport('pngmov', 'png', { outW: 160, outH: 90, from: 0, to: 3, audio: false }, true);
+      return a.ui.msgEl && a.ui.msgEl.textContent;
+    });
+    const raw = spawnSync('ffmpeg', ['-v', 'error', '-i', movOut, '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgba', '-'], { maxBuffer: 1 << 22 }).stdout || Buffer.alloc(0);
+    const at = (X, Y) => Array.from(raw.subarray((Y * 160 + X) * 4, (Y * 160 + X) * 4 + 4));
+    check('File > Export (ffmpeg): written to the picked file, reference layer left out, alpha kept',
+      /^Exported 4 frames/.test(gui || '') && raw.length === 160 * 90 * 4 && at(30, 40)[3] === 0 && JSON.stringify(at(120, 40)) === '[0,0,255,255]',
+      { gui, panel: at(30, 40), anim: at(120, 40) });
+  } else console.log('     note: ffmpeg not installed; GUI video export check skipped');
   await page.evaluate(() => { window.OT.app.dirty = false; });
   await app.close();
 

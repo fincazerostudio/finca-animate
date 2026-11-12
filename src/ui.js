@@ -107,7 +107,10 @@
         { sep: 1 },
         { label: 'Export Animated GIF…', fn: () => this.exportDialog('gif') },
         { label: 'Export Video (MP4)…', fn: () => this.exportDialog('mp4') },
+        { label: 'Export Video (H.265 MP4)…', fn: () => this.exportDialog('mp4h265') },
         { label: 'Export Video (WebM)…', fn: () => this.exportDialog('webm') },
+        { label: 'Export QuickTime (ProRes 4444)…', fn: () => this.exportDialog('prores') },
+        { label: 'Export QuickTime (PNG, lossless)…', fn: () => this.exportDialog('pngmov') },
         { label: 'Export PNG Sequence…', fn: () => this.exportDialog('sequence') },
         { label: 'Export Current Frame…', fn: () => this.exportDialog('frame') }
       );
@@ -2107,9 +2110,22 @@
       ]);
     }
 
-    exportDialog(kind) {
+    async exportDialog(kind) {
       const a = this.app, p = a.project;
-      const titles = { gif: 'Export Animated GIF', mp4: 'Export Video (MP4)', webm: 'Export Video (WebM)', sequence: 'Export PNG Sequence', frame: 'Export Current Frame' };
+      const titles = { gif: 'Export Animated GIF', mp4: 'Export Video (MP4)', mp4h265: 'Export Video (H.265 MP4)',
+        webm: 'Export Video (WebM)', prores: 'Export QuickTime (ProRes 4444)', pngmov: 'Export QuickTime (PNG)',
+        sequence: 'Export PNG Sequence', frame: 'Export Current Frame' };
+      const codec = OT.UI.VIDEO_CODECS[kind];
+      const info = codec ? await OT.IO.Export.videoFormats() : null;
+      const offline = !!(info && info.formats[codec] && info.formats[codec].ok);
+      if (codec && !offline && !(kind === 'mp4' || kind === 'webm')) {
+        this.modal(titles[kind], el('div', { style: { maxWidth: '360px' } }, [
+          info && info.found ? 'The ffmpeg on this computer (' + info.path + ') cannot write this format.'
+            : 'This format is written by ffmpeg, which was not found. Install it (Linux: your package manager; ' +
+              'Windows: "winget install ffmpeg") and restart Finca Animate, or set FINCA_FFMPEG to its path.'
+        ]));
+        return;
+      }
       const scale = el('select');
       [['100%', 1], ['75%', 0.75], ['50%', 0.5], ['25%', 0.25]].forEach(([l, v]) =>
         scale.appendChild(el('option', { value: v }, [l])));
@@ -2119,15 +2135,23 @@
       const rows = [this._field('Scale', scale)];
       if (kind !== 'frame') { rows.push(this._field('From frame', from)); rows.push(this._field('To frame', to)); }
       let audioChk = null;
-      if ((kind === 'mp4' || kind === 'webm') && a.audioBuffer) {
+      let alphaChk = null;
+      if (offline && info.formats[codec].alpha) {
+        alphaChk = el('input', { type: 'checkbox' });
+        alphaChk.checked = kind !== 'webm';
+        rows.push(el('label', { class: 'chk-row' }, [alphaChk, 'Transparent background (alpha)']));
+      }
+      if (codec && a.audioBuffer) {
         audioChk = el('input', { type: 'checkbox' });
         audioChk.checked = true;
         rows.push(el('label', { class: 'chk-row' }, [audioChk, 'Include audio track']));
       }
       const note = el('div', { class: 'chk-row' });
       if (kind === 'gif') note.textContent = 'Tip: 50% scale keeps GIF size reasonable.';
-      if (kind === 'webm') note.textContent = 'WebM records in real time at ' + p.fps + ' fps.';
-      if (kind === 'mp4') note.textContent = 'MP4 (H.264) records in real time at ' + p.fps + ' fps.';
+      if (codec && offline) note.textContent = 'Rendered frame by frame and encoded with ffmpeg ' + (info.version || '') +
+        ': every frame exact, sound cut to the frames.';
+      else if (kind === 'webm') note.textContent = 'WebM records in real time at ' + p.fps + ' fps. Install ffmpeg for frame-accurate export.';
+      else if (kind === 'mp4') note.textContent = 'MP4 (H.264) records in real time at ' + p.fps + ' fps. Install ffmpeg for frame-accurate export.';
       rows.push(note);
       const body = el('div', { style: { display: 'flex', flexDirection: 'column', gap: '9px' } }, rows);
       this.modal(titles[kind], body, [
@@ -2142,10 +2166,39 @@
               to: kind === 'frame' ? a.frame : U.clamp((parseInt(to.value) || p.frameCount) - 1, 0, p.frameCount - 1),
               audio: !!(audioChk && audioChk.checked)
             };
-            this._runExport(kind, opts);
+            if (offline) this._runOfflineExport(kind, codec, opts, !!(alphaChk && alphaChk.checked));
+            else this._runExport(kind, opts);
           }
         }
       ]);
+    }
+
+    // Frame-accurate export through ffmpeg: straight to a file picked here.
+    async _runOfflineExport(kind, codec, opts, alpha) {
+      const a = this.app;
+      a.playback.stop();
+      const name = (a.project.name || 'animation').replace(/[^\w\-]+/g, '_');
+      const out = await window.OpenToonDesktop.encode.saveDialog(name, codec);
+      if (!out) return;
+      const bar = el('div'); bar.style.width = '0%';
+      const label = el('div', { class: 'chk-row', text: 'Preparing…' });
+      const body = el('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px', minWidth: '300px' } }, [
+        label, el('div', { class: 'progress' }, [bar])
+      ]);
+      const m = this.modal('Exporting…', body, []);
+      const t0 = performance.now();
+      try {
+        const r = await OT.IO.Export.offline(a, opts, (pr, lbl) => {
+          bar.style.width = Math.round(pr * 100) + '%';
+          if (lbl) label.textContent = lbl;
+        }, { format: codec, out, alpha });
+        m.close();
+        this.status('Exported ' + r.frames + ' frames to ' + r.path + ' in ' + ((performance.now() - t0) / 1000).toFixed(1) + ' s');
+      } catch (err) {
+        console.error(err);
+        m.close();
+        this.status('Export failed: ' + err.message);
+      }
     }
 
     async _runExport(kind, opts) {
@@ -2788,4 +2841,6 @@
   }
 
   OT.UI = UI;
+  // export menu entries written by ffmpeg -> codec
+  UI.VIDEO_CODECS = { mp4: 'h264', mp4h265: 'h265', webm: 'vp9', prores: 'prores', pngmov: 'png' };
 })(window.OT);

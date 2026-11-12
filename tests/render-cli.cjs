@@ -47,6 +47,15 @@ const u32be = (b, o) => b.readUInt32BE(o);
     bc.ctx.fillStyle = '#0000ff'; bc.ctx.fillRect(330, 140, 60, 60); bc.dirty();
     for (let f = 1; f < 12; f++) B.exposure[f] = B.exposure[0];
     B.transform.keyframes = [{ frame: 0, x: 0, y: 0, sx: 1, sy: 1, rot: 0 }, { frame: 11, x: 200, y: 0, sx: 1, sy: 1, rot: 0 }];
+    // a 1 s, 48 kHz stereo tone as the soundtrack
+    const n = 48000, b = new Uint8Array(44 + n * 4), v = new DataView(b.buffer);
+    const w = (o, s) => { for (let i = 0; i < s.length; i++) b[o + i] = s.charCodeAt(i); };
+    w(0, 'RIFF'); v.setUint32(4, 36 + n * 4, true); w(8, 'WAVEfmt '); v.setUint32(16, 16, true);
+    v.setUint16(20, 1, true); v.setUint16(22, 2, true); v.setUint32(24, 48000, true); v.setUint32(28, 192000, true);
+    v.setUint16(32, 4, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, n * 4, true);
+    for (let i = 0; i < n; i++) { const x = Math.round(Math.sin(i / 48000 * 2 * Math.PI * 440) * 8000); v.setInt16(44 + i * 4, x, true); v.setInt16(46 + i * 4, x, true); }
+    let bin = ''; for (let i = 0; i < b.length; i += 8192) bin += String.fromCharCode.apply(null, b.subarray(i, i + 8192));
+    p.audio = { name: 'tone.wav', data: 'data:audio/wav;base64,' + btoa(bin) };
     return JSON.stringify(window.OT.IO.serialize(a));
   });
   const scene = path.join(tmp, 'scene.otoon');
@@ -90,6 +99,7 @@ const u32be = (b, o) => b.readUInt32BE(o);
   const mp4ok = r.code === 0 && b.toString('latin1', 4, 8) === 'ftyp';
   const mp4unsupported = r.code === 1 && /MP4 recording is not supported/.test(r.out);
   check('mp4 (default output name): written, or a clear "not supported" error', mp4ok || mp4unsupported, r.out);
+  check('video is not recorded in real time (a 12-frame clip renders without waiting it out)', !/recording in real time/.test(r.out) || !mp4ok, r.out);
   if (mp4unsupported) console.log('     note: this Electron build cannot record MP4; .webm works');
 
   // 2b. the same scene as a .finca (built here from the .otoon with the
@@ -133,6 +143,52 @@ const u32be = (b, o) => b.readUInt32BE(o);
   r = render(['--render', fscene, '-o', out('finca.gif'), '--scale', '0.5']);
   b = fs.existsSync(out('finca.gif')) ? fs.readFileSync(out('finca.gif')) : Buffer.alloc(0);
   check('.finca input: gif with all 12 frames', r.code === 0 && (b.toString('latin1').match(/\x21\xF9\x04/g) || []).length === 12, r.out);
+
+  // 2c. frame-accurate video through ffmpeg
+  const probe = (f, sel) => {
+    const r = spawnSync('ffprobe', ['-v', 'error', '-count_frames', '-show_entries',
+      'stream=codec_type,codec_name,pix_fmt,width,height,nb_read_frames,duration,sample_rate', '-of', 'json', f], { encoding: 'utf8' });
+    try { return JSON.parse(r.stdout).streams; } catch (e) { return null; }
+  };
+  const haveFfmpeg = spawnSync('ffprobe', ['-version']).status === 0;
+  if (!haveFfmpeg) console.log('     note: ffmpeg/ffprobe not installed; frame-accurate checks skipped');
+  else {
+    const vid = st => (st || []).find(x => x.codec_type === 'video') || {};
+    const aud = st => (st || []).find(x => x.codec_type === 'audio') || {};
+    let st = probe(mp4);
+    check('mp4 via ffmpeg: H.264, all 12 frames, 320x180, with sound',
+      vid(st).codec_name === 'h264' && +vid(st).nb_read_frames === 12 && vid(st).width === 320 && aud(st).codec_name === 'aac', st);
+
+    r = render(['--render', fscene, '-o', out('mov'), '--from', '3', '--to', '7']);
+    st = probe(out('mov'));
+    check('mov (ProRes 4444): exactly frames 3-7, alpha pixel format', r.code === 0 && vid(st).codec_name === 'prores' &&
+      +vid(st).nb_read_frames === 5 && /^yuva/.test(vid(st).pix_fmt || ''), { out: r.out, st });
+    // 5 frames at 24 fps = 0.208333 s = exactly 10000 samples at 48 kHz
+    check('mov: sound cut to the exported frames, sample-accurate (10000 samples)',
+      aud(st).codec_name === 'pcm_s24le' && Math.round(+aud(st).duration * 48000) === 10000, aud(st));
+
+    r = render(['--render', fscene, '-o', out('h265.mp4'), '--codec', 'h265', '--no-audio', '--scale', '0.5']);
+    st = probe(out('h265.mp4'));
+    check('h265 mp4, no audio', r.code === 0 && vid(st).codec_name === 'hevc' && +vid(st).nb_read_frames === 12 && !aud(st).codec_name, { out: r.out, st });
+
+    r = render(['--render', fscene, '-o', out('png.mov'), '--codec', 'png', '--alpha', '--no-audio']);
+    st = probe(out('png.mov'));
+    // decode frame 12 back and compare with the PNG frame render: lossless means identical
+    const raw = spawnSync('ffmpeg', ['-v', 'error', '-i', out('png.mov'), '-vf', 'select=eq(n\\,11)', '-frames:v', '1',
+      '-f', 'rawvideo', '-pix_fmt', 'rgba', '-'], { maxBuffer: 1 << 24 }).stdout || Buffer.alloc(0);
+    const at = (X, Y) => Array.from(raw.subarray((Y * 640 + X) * 4, (Y * 640 + X) * 4 + 4));
+    check('png mov --alpha: lossless, background left transparent, blocks where they belong',
+      r.code === 0 && vid(st).codec_name === 'png' && raw.length === 640 * 360 * 4 &&
+      at(360, 170)[3] === 0 && JSON.stringify(at(100, 180)) === '[255,0,0,255]' && JSON.stringify(at(560, 170)) === '[0,0,255,255]',
+      { out: r.out, bg: at(360, 170), red: at(100, 180), blue: at(560, 170) });
+
+    r = render(['--render', fscene, '-o', out('a.webm'), '--alpha', '--scale', '0.5']);
+    st = probe(out('a.webm'));
+    check('webm via ffmpeg: VP9, 12 frames, opus sound', r.code === 0 && vid(st).codec_name === 'vp9' && +vid(st).nb_read_frames === 12 && aud(st).codec_name === 'opus', { out: r.out, st });
+    r = render(['--render', fscene, '-o', out('bad.mov'), '--codec', 'h264']);
+    check('--codec that does not fit the extension: exit 2', r.code === 2 && /does not go in/.test(r.out), r);
+    check('no partial files left next to the outputs', !fs.readdirSync(tmp).some(n => /\.part-/.test(n)), fs.readdirSync(tmp));
+  }
 
   // 3. errors and help
   r = render(['--render', path.join(tmp, 'missing.otoon')]);

@@ -196,14 +196,17 @@
   }
 
   /* ---------------- frame rendering (camera-aware) ---------------- */
-  function renderFrame(app, frame, outW, outH) {
+  // transparent: leave the background colour out (exports with alpha)
+  function renderFrame(app, frame, outW, outH, transparent) {
     const p = app.project;
     const cam = p.cameraAt(frame);
     const cv = document.createElement('canvas');
     cv.width = outW; cv.height = outH;
     const ctx = cv.getContext('2d', { willReadFrequently: true });
-    ctx.fillStyle = p.bg;
-    ctx.fillRect(0, 0, outW, outH);
+    if (!transparent) {
+      ctx.fillStyle = p.bg;
+      ctx.fillRect(0, 0, outW, outH);
+    }
     const cx = p.width / 2 + cam.x, cy = p.height / 2 + cam.y;
     const viewW = p.width / cam.zoom, viewH = p.height / cam.zoom;
     ctx.save();
@@ -276,8 +279,74 @@
     return new Blob(chunks, { type: fmt === 'mp4' ? 'video/mp4' : 'video/webm' });
   }
 
+  /* The soundtrack under frames [from, to] as a 32-bit float WAV, cut at
+     exact sample positions (silence past the end of the track), so the
+     sound starts and ends exactly with the exported frames. */
+  function wavSlice(buf, startSec, durSec) {
+    const sr = buf.sampleRate, ch = buf.numberOfChannels;
+    const start = Math.round(startSec * sr), len = Math.max(1, Math.round(durSec * sr));
+    const data = [];
+    for (let c = 0; c < ch; c++) data.push(buf.getChannelData(c));
+    const bytes = new ArrayBuffer(44 + len * ch * 4), v = new DataView(bytes);
+    const str = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+    str(0, 'RIFF'); v.setUint32(4, 36 + len * ch * 4, true); str(8, 'WAVE');
+    str(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 3, true); v.setUint16(22, ch, true);
+    v.setUint32(24, sr, true); v.setUint32(28, sr * ch * 4, true); v.setUint16(32, ch * 4, true); v.setUint16(34, 32, true);
+    str(36, 'data'); v.setUint32(40, len * ch * 4, true);
+    const out = new Float32Array(bytes, 44);
+    for (let i = 0; i < len; i++) {
+      const s = start + i;
+      for (let c = 0; c < ch; c++) out[i * ch + c] = (s >= 0 && s < data[c].length) ? data[c][s] : 0;
+    }
+    return new Uint8Array(bytes);
+  }
+
+  // What the system ffmpeg can export (desktop only; cached).
+  let videoInfo = null;
+  function videoFormats() {
+    const enc = window.OpenToonDesktop && window.OpenToonDesktop.encode;
+    if (!enc) return Promise.resolve({ found: false, formats: {} });
+    if (!videoInfo) videoInfo = enc.info().catch(() => ({ found: false, formats: {} }));
+    return videoInfo;
+  }
+
   const Export = {
-    renderFrame,
+    renderFrame, videoFormats, wavSlice,
+    /* Frame-accurate video: every frame rendered exactly once, in order,
+       encoded by ffmpeg straight into v.out (picked in the export dialog or
+       given on the command line). v = { format: 'h264' | 'h265' | 'prores'
+       | 'png' | 'vp9', out, alpha }. Resolves { path, bytes, frames }. */
+    async offline(app, opts, onProgress, v) {
+      const enc = window.OpenToonDesktop && window.OpenToonDesktop.encode;
+      if (!enc) throw new Error('video export through ffmpeg needs the desktop app');
+      const { outW, outH, from, to } = opts;
+      const fps = app.project.fps, frames = to - from + 1;
+      const audio = (opts.audio && app.audioBuffer) ? wavSlice(app.audioBuffer, from / fps, frames / fps) : null;
+      const s = await enc.start({ format: v.format, width: outW, height: outH, fps, audio, alpha: !!v.alpha, out: v.out });
+      if (!s || !s.ok) throw new Error((s && s.error) || 'could not start ffmpeg');
+      const inflight = [];
+      try {
+        for (let f = from; f <= to; f++) {
+          await app.seekVideosTo(f);
+          await IO.loadFrame(app, f);
+          const cv = renderFrame(app, f, outW, outH, !!v.alpha);
+          const px = cv.getContext('2d').getImageData(0, 0, outW, outH).data;
+          const sent = enc.frame(s.id, new Uint8Array(px.buffer, px.byteOffset, px.byteLength))
+            .then(r => { if (!r || !r.ok) throw new Error((r && r.error) || 'ffmpeg stopped'); });
+          sent.catch(() => {});
+          inflight.push(sent);
+          if (inflight.length >= 3) await inflight.shift();     // keep ffmpeg busy, memory bounded
+          if (onProgress) onProgress((f - from + 1) / frames, 'Encoding frame ' + (f + 1));
+        }
+        await Promise.all(inflight);
+      } catch (e) {
+        enc.cancel(s.id);
+        throw e;
+      }
+      const r = await enc.finish(s.id);
+      if (!r || !r.ok) throw new Error((r && r.error) || 'ffmpeg failed');
+      return r;
+    },
     async sequence(app, opts, onProgress) {
       const zip = new Zip();
       const { outW, outH, from, to } = opts;

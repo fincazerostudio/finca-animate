@@ -47,7 +47,17 @@ contextBridge.exposeInMainWorld('OpenToonDesktop', {
     job: () => ipcRenderer.invoke('opentoon:render-job').catch(() => null),
     progress: msg => ipcRenderer.send('opentoon:render-progress', String(msg)),
     done: bytes => ipcRenderer.invoke('opentoon:render-done', bytes),
+    written: info => ipcRenderer.invoke('opentoon:render-written', info),
     fail: msg => ipcRenderer.send('opentoon:render-fail', String(msg))
+  },
+  // offline video export through ffmpeg (frames are sent as raw RGBA)
+  encode: {
+    info: () => ipcRenderer.invoke('opentoon:ffmpeg-info'),
+    saveDialog: (name, format) => ipcRenderer.invoke('opentoon:export-dialog', name, format),
+    start: (opts) => ipcRenderer.invoke('opentoon:encode-start', opts),
+    frame: (id, bytes) => ipcRenderer.invoke('opentoon:encode-frame', id, bytes),
+    finish: (id) => ipcRenderer.invoke('opentoon:encode-finish', id),
+    cancel: (id) => ipcRenderer.invoke('opentoon:encode-cancel', id)
   },
   // real file IO for the desktop app: native dialogs, save-in-place, autosave
   fs: {

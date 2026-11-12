@@ -4,6 +4,7 @@ const { app, BrowserWindow, Menu, shell, dialog, ipcMain, screen } = require('el
 const path = require('path');
 const fs = require('fs');
 const FincaZip = require('./finca-zip.js');
+const Ffmpeg = require('./ffmpeg.js');
 
 const isDev = process.argv.includes('--dev') || !app.isPackaged;
 let win = null;
@@ -783,6 +784,59 @@ function setupIpc() {
     return true;
   });
 
+  /* ---- offline video export (ffmpeg) ----
+     The renderer never names an output path itself: it gets one from the
+     export Save dialog (or the --render command line) and the encoder only
+     writes there. */
+  const exportTargets = new Set();
+  const encoders = new Map();
+  let encoderSeq = 0;
+  ipcMain.handle('opentoon:ffmpeg-info', () => Ffmpeg.info());
+  ipcMain.handle('opentoon:export-dialog', async (_e, name, format) => {
+    const fmt = Ffmpeg.FORMATS[format];
+    if (!fmt) return null;
+    const base = String(name || 'animation').replace(/[\\/:*?"<>|]+/g, '_');
+    const r = await dialog.showSaveDialog(win, {
+      title: 'Export ' + fmt.label,
+      defaultPath: base + '.' + fmt.ext,
+      filters: [{ name: fmt.label, extensions: [fmt.ext] }]
+    });
+    if (r.canceled || !r.filePath) return null;
+    const re = new RegExp('\\.' + fmt.ext + '$', 'i');
+    const f = path.resolve(re.test(r.filePath) ? r.filePath : r.filePath + '.' + fmt.ext);
+    exportTargets.add(f);
+    return f;
+  });
+  ipcMain.handle('opentoon:encode-start', (_e, opts) => {
+    try {
+      const out = opts && typeof opts.out === 'string' ? path.resolve(opts.out) : null;
+      const allowed = out && (exportTargets.has(out) || (renderJob && renderJob.out && path.resolve(renderJob.out) === out));
+      if (!allowed) return { ok: false, error: 'export to a file picked in the Export dialog' };
+      const enc = new Ffmpeg.Encoder(Object.assign({}, opts, { out }));
+      const id = ++encoderSeq;
+      encoders.set(id, enc);
+      return { ok: true, id };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+  ipcMain.handle('opentoon:encode-frame', async (_e, id, bytes) => {
+    const enc = encoders.get(id);
+    if (!enc) return { ok: false, error: 'export was stopped' };
+    try { await enc.write(bytes); return { ok: true }; }
+    catch (e) { enc.cancel(); encoders.delete(id); return { ok: false, error: e.message }; }
+  });
+  ipcMain.handle('opentoon:encode-finish', async (_e, id) => {
+    const enc = encoders.get(id);
+    if (!enc) return { ok: false, error: 'export was stopped' };
+    encoders.delete(id);
+    try { return await enc.finish(); } catch (e) { return { ok: false, error: e.message }; }
+  });
+  ipcMain.handle('opentoon:encode-cancel', (_e, id) => {
+    const enc = encoders.get(id);
+    if (enc) { enc.cancel(); encoders.delete(id); }
+    return true;
+  });
+  app.on('will-quit', () => { for (const enc of encoders.values()) enc.cancel(); encoders.clear(); });
+
   /* ---- file stat for the start screen (last-opened timestamp on cards) ---- */
   ipcMain.handle('opentoon:stat-file', (_e, file) => {
     if (!isProject(file)) return { ok: false, error: 'not a project file' };
@@ -850,15 +904,19 @@ const RENDER_USAGE = [
   'Usage: opentoon-studio --render <scene.finca | scene.otoon> [options]',
   '',
   '  -o, --out <file>   output file; the extension picks the format:',
-  '                     .mp4 .webm .gif .zip (PNG sequence) .png (one frame)',
+  '                     .mp4 .mov .webm .gif .zip (PNG sequence) .png (one frame)',
   '                     default: <scene>.mp4 next to the scene',
+  '  --codec <c>        video codec: h264 | h265 (.mp4), prores | png (.mov), vp9 (.webm)',
+  '                     defaults: .mp4 h264, .mov prores (4444, with alpha), .webm vp9',
+  '  --alpha            keep transparency (.mov, .webm): the background colour is left out',
   '  --scale <s>        output scale, e.g. 0.5 (default 1)',
   '  --from <n>         first frame, 1-based (default 1)',
   '  --to <n>           last frame, 1-based (default: last frame)',
   '  --frame <n>        frame for .png output (default 1)',
   '  --no-audio         leave the soundtrack out of .mp4 / .webm',
   '',
-  'Video (.mp4 / .webm) records in real time, so it takes as long as the clip.',
+  'Video is rendered frame by frame and encoded with ffmpeg (FINCA_FFMPEG or PATH).',
+  'Without ffmpeg, .mp4 / .webm fall back to real-time recording; .mov needs ffmpeg.',
   'Needs a graphical session (Wayland/X11); on a headless box use xvfb-run.'
 ].join('\n');
 
@@ -884,6 +942,8 @@ function parseRenderArgs(argv) {
     else if (a === '--to') job.to = Math.round(num(a, next()));
     else if (a === '--frame') job.frame = Math.round(num(a, next()));
     else if (a === '--no-audio') job.audio = false;
+    else if (a === '--alpha') job.alpha = true;
+    else if (a === '--codec') job.codec = next().toLowerCase();
     else if (a.startsWith('-')) {
       if (/^--(dev|no-sandbox|enable-features|disable-gpu|ozone)/.test(a)) continue;   // chromium / launcher flags
       throw new Error('unknown option ' + a);
@@ -898,9 +958,16 @@ function parseRenderArgs(argv) {
   if (!job.out) job.out = job.input.replace(/\.(finca|otoon)$/i, '') + '.mp4';
   job.out = path.resolve(job.out);
   const ext = path.extname(job.out).toLowerCase();
-  const formats = { '.mp4': 'mp4', '.webm': 'webm', '.gif': 'gif', '.zip': 'sequence', '.png': 'frame' };
+  const formats = { '.mp4': 'mp4', '.mov': 'mov', '.webm': 'webm', '.gif': 'gif', '.zip': 'sequence', '.png': 'frame' };
   job.format = formats[ext];
-  if (!job.format) throw new Error('unsupported output type "' + ext + '" (use .mp4 .webm .gif .zip .png)');
+  if (!job.format) throw new Error('unsupported output type "' + ext + '" (use .mp4 .mov .webm .gif .zip .png)');
+  const codecs = { mp4: ['h264', 'h265'], mov: ['prores', 'png'], webm: ['vp9'] };
+  if (codecs[job.format]) {
+    job.codec = job.codec || codecs[job.format][0];
+    if (!codecs[job.format].includes(job.codec))
+      throw new Error('--codec ' + job.codec + ' does not go in ' + ext + ' (use ' + codecs[job.format].join(' or ') + ')');
+  } else if (job.codec) throw new Error('--codec only applies to video (.mp4 .mov .webm)');
+  if (job.alpha && !['mov', 'webm'].includes(job.format)) throw new Error('--alpha needs .mov or .webm');
   if (!fs.existsSync(path.dirname(job.out))) throw new Error('output folder does not exist: ' + path.dirname(job.out));
   if (job.from && job.to && job.to < job.from) throw new Error('--to is before --from');
   return job;
@@ -939,6 +1006,9 @@ function runRender(job) {
     } catch (e) { finish(1, 'Could not write ' + job.out + ': ' + e.message); }
   });
   ipcMain.on('opentoon:render-fail', (_e, msg) => finish(1, 'Render failed: ' + msg));
+  // the encoder already wrote job.out (ffmpeg export)
+  ipcMain.handle('opentoon:render-written', (_e, r) =>
+    finish(0, 'Wrote ' + job.out + ' (' + Math.round(((r && r.bytes) || 0) / 1024) + ' KB, ' + ((r && r.frames) || 0) + ' frames)'));
   setupIpc();   // file reads for the renderer (read-file etc.)
   app.whenReady().then(() => {
     process.stdout.write('Rendering ' + job.input + ' -> ' + job.out + '\n');
