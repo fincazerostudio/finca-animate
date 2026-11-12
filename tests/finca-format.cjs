@@ -222,6 +222,35 @@ const setSavePath = (app, p) => app.evaluate(({ dialog }, f) => {
   check('the previous version is kept as .bak', fs.existsSync(finca + '.bak') && zipEntries(finca + '.bak').size === after2.size);
   check('no temp file left behind', !fs.readdirSync(tmp).some(n => /\.tmp-/.test(n)), fs.readdirSync(tmp));
 
+  // An edit during asynchronous fingerprinting must remain dirty for the
+  // next background save, even though this save captured the older JSON.
+  const duringSave = await page.evaluate(async (f) => {
+    const OT = window.OT, a = OT.app, v = a.project.layers[3].cels[1];
+    const subtle = crypto.subtle, original = subtle.digest;
+    let signal, release, intercepted = false;
+    const entered = new Promise(r => { signal = r; });
+    const gate = new Promise(r => { release = r; });
+    subtle.digest = async function (...args) {
+      const result = await original.apply(this, args);
+      if (!intercepted) { intercepted = true; signal(); await gate; }
+      return result;
+    };
+    try {
+      const saving = OT.IO.writeProjectTo(a, f);
+      await entered;
+      v.strokes[0].width += 1; v.dirty(); a.dirty = true;
+      release(); await saving;
+      await OT.IO.writeProjectTo(a, f, { background: true });
+      const afterEdit = OT.IO.stats.lastSave.encoded;
+      // Explicit Save also detects direct script edits without dirty().
+      v.strokes[0].width += 1;
+      await OT.IO.writeProjectTo(a, f);
+      return { afterEdit, directEdit: OT.IO.stats.lastSave.encoded };
+    } finally { release(); subtle.digest = original; }
+  }, finca);
+  check('vector edits during a save and direct script edits are saved next time',
+    duringSave.afterEdit === 1 && duringSave.directEdit === 1, duringSave);
+
   /* ---------- 3. synchronous fallback == background load ---------- */
   const syn = await page.evaluate(async (f) => {
     const OT = window.OT, a = OT.app;
@@ -407,11 +436,14 @@ const setSavePath = (app, p) => app.evaluate(({ dialog }, f) => {
         { id: 'board', name: 'Board', type: 'drawing', reference: true, exposure: [1, 1, 1, 1], nextNum: 2,
           cels: { 1: { k: 'r', src: 'drawings/board/1-panel.png', w: 160, h: 90 } } },
         { id: 'anim', name: 'Anim', type: 'drawing', exposure: [1, 1, 1, 1], nextNum: 2,
-          cels: { 1: { k: 'r', src: 'drawings/anim/1-x.png', w: 160, h: 90 } } }
+          cels: { 1: { k: 'r', src: 'drawings/anim/1-x.png', w: 160, h: 90 } } },
+        { id: 'vec', name: 'Outside vector', type: 'vector', exposure: [1, 1, 1, 1], nextNum: 2,
+          cels: { 1: { k: 'v', src: 'drawings/vec/custom.json', w: 160, h: 90 } } }
       ]
     })), true);
     w.add('drawings/board/1-panel.png', Buffer.from(pngs.panel, 'base64'), true);
     w.add('drawings/anim/1-x.png', Buffer.from(pngs.anim, 'base64'), false);
+    w.add('drawings/vec/custom.json', Buffer.from(JSON.stringify({ strokes: [], eraserMarks: [] })), true);
     w.finish();
     fs.closeSync(fd);
   }
@@ -437,7 +469,7 @@ const setSavePath = (app, p) => app.evaluate(({ dialog }, f) => {
   check('an outside-tool .finca opens (plain names, deflated PNG, no mimetype entry)', ext.failed === 0 && ext.stagePanel[0] > 200 && ext.exportAnim[2] > 200, ext);
   check('reference layer: locked by default, visible on stage, left out of exports', ext.ref === true && ext.locked === true && ext.exportPanel[0] > 200 && ext.exportPanel[1] > 200 && ext.exportPanel[2] > 200 && ext.stagePanel[1] < 50, ext);
   check('storyboard block and reference flag survive a save untouched', ext.sbAgain === JSON.stringify(storyboard) && ext.refAgain, ext.sbAgain);
-  check('unchanged outside drawings are copied with their names kept', ext.save.encoded === 0 && entB.has('drawings/board/1-panel.png') && entB.has('drawings/anim/1-x.png') && entB.get('drawings/board/1-panel.png').method === 8, [...entB.keys()]);
+  check('unchanged outside drawings are copied with their names kept', ext.save.encoded === 0 && entB.has('drawings/board/1-panel.png') && entB.has('drawings/anim/1-x.png') && entB.get('drawings/board/1-panel.png').method === 8 && entB.has('drawings/vec/custom.json'), [...entB.keys()]);
   // File > Export QuickTime (PNG) through the real dialog code: the board
   // panel (reference layer) must not be in the video
   const { spawnSync } = require('child_process');

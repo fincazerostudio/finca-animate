@@ -1,8 +1,27 @@
 # `.finca` project format: design note (Phase 1, "Project format v2")
 
-Status: **proposal, waiting for Julio's choice of (a), (b) or (c).** Nothing
-in the app has changed yet. Branch: `feat/finca-format` (based on
-`finca-animate` @ 93ba22b).
+Status: **built on `feat/finca-format`**, native format version 3. The
+chosen container is option (a), a single ZIP64 file. The sections below
+retain the original design discussion and historical baseline; the
+implementation summary here takes precedence over proposals below.
+
+- `mimetype` is the first, uncompressed entry (`application/x-finca-animate`).
+  `scene.json` contains `format: "finca"`, `version: 3` and scene metadata.
+- Raster refs are `{ k: 'r', src, w, h, x?, y? }`. `w` and `h` describe
+  the drawing surface; the PNG may be cropped and is placed at optional
+  `x`, `y`. Missing coordinates mean a full-size PNG placed at 0,0.
+  Vector refs are `{ k: 'v', src, w, h }`, with strokes stored as JSON.
+- The optional scene `storyboard` block is preserved across open/save.
+  Layers may have `reference: true`; they default to locked unless an
+  explicit `locked` value is supplied. Other tools may write these fields.
+- Only changed drawings are encoded; other entries are copied unchanged.
+  Temp file, fsync, backup hard link and atomic rename protect saves.
+- Raster surfaces are loaded lazily and evicted under the cel memory
+  budget. Edited drawings are stashed as PNG before eviction.
+- `.otoon` is read-only import. OpenToon export is undecided and unavailable.
+  New saves and autosave history use `.finca`; old recovery files still open.
+- Offline ffmpeg export and the performance harness are implemented.
+  `tests/perf-budget.cjs` checks a two-minute 1080p scene with ten layers.
 
 ## 1. Today (what we are replacing)
 

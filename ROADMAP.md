@@ -12,16 +12,16 @@ costs a week.
 ## Phase 0 — Protect the work ✅
 
 - [x] **Safe saves.** Temp file + rename (atomic), previous version kept as
-      `scene.otoon.bak`.
+      `scene.finca.bak`.
 - [x] **Autosave history.** A snapshot at most every 5 minutes, newest 8
       kept; File → Recover Autosave… opens one as an unsaved copy.
-- [x] **File-format versioning.** Format 2. Files from a newer version open
+- [x] **File-format versioning.** Native format 3; `.otoon` formats 1 and 2 still import. Files from a newer version open
       with a warning, and Save becomes Save As so the original is never
       overwritten with data missing.
 - [x] **Continuous testing.** `.github/workflows/tests.yml` runs `npm test`,
       the packaged-app, render and file-safety tests on every push. The
       flaky lasso check now feeds realistic pen timing.
-- [x] **Tighter file access.** The renderer can only read `.otoon` files and
+- [x] **Tighter file access.** The renderer can only read `.finca` and `.otoon` files and
       only write projects it opened, picked in a dialog, or new increments
       next to them.
 
@@ -33,32 +33,24 @@ costs a week.
       kept under a budget (default 1 GB, `settings.celMemoryMB`), releasing
       the ones furthest from the playhead first. Opening a 300-drawing
       1080p vector scene went from ≈2.4 GB of surfaces to none.
-- [ ] **Memory per drawing (raster).** Raster surfaces hold the only copy of
-      the pixels, so they stay resident. Next: keep far-away raster cels
-      compressed (PNG in memory) and decode them ahead of the playhead.
-- [ ] **Project format v2: `.finca` (decided: single zip file).** Today one
-      JSON file with base64 images is loaded and saved whole; on a
-      300-drawing 1080p scene every save and 20 s autosave freezes the app
-      for 2–4 s (re-encoding every drawing) and opening takes ~3 s.
-      `.finca` becomes the native format: one zip file with a small scene
-      file plus one file per cel, re-encoding only the cels that changed
-      (no new dependency: Node's built-in zlib, ZIP64 for big scenes).
-      Vector cels are saved from their strokes, never from `cel.canvas`.
-      `.otoon` files keep opening forever; saving one always goes to a new
-      `.finca` (Save As), never overwriting the `.otoon`. Own file icon and
-      file association.
-      Design note: `docs/finca-format-design.md` on branch `feat/finca-format`.
-      Later, without changing the format: the "hybrid" option (fast hidden
-      recovery saves between full saves) for very long shots.
-      Undecided: an optional "Export → OpenToon (.otoon)" for sharing with
-      the original app (it drops Finca-only data, with a warning).
-- [ ] **Offline, frame-accurate export.** Video is recorded in real time
-      with MediaRecorder (slow, can drop frames under load, no alpha). Render
-      frame by frame and encode with ffmpeg: H.264/H.265, ProRes 4444 and
-      PNG/QuickTime with alpha, audio muxed sample-accurately. `--render`
-      uses the same path.
-- [ ] **Performance budget.** Measure and keep under budget: open/save time,
-      playback fps and memory for a 2-minute, 1080p, 10-layer test scene.
+- [x] **Memory per drawing (raster).** Far-away drawings are parked as PNG
+      bytes in the project file or memory, loaded ahead of the playhead, and
+      released under the same surface budget as vector drawings.
+- [x] **Native `.finca` project format.** One ZIP64 container with scene
+      metadata and separate drawings. Saves encode changed drawings and copy
+      unchanged entries. Raster PNGs are cropped with placement coordinates;
+      vectors are saved from strokes. Existing `.otoon` projects open as
+      imports and save to a new `.finca` file. Includes file associations,
+      icons, atomic saves, backups and autosave history.
+      Design and schema: `docs/finca-format-design.md`.
+      Optional OpenToon export remains undecided.
+- [x] **Offline, frame-accurate export.** ffmpeg encodes H.264/H.265,
+      ProRes 4444, PNG/QuickTime and VP9, with sample-aligned audio.
+      `--render` uses the same path. MP4/WebM retain a real-time fallback
+      when ffmpeg is unavailable.
+- [x] **Performance budget.** `npm run test:perf` checks open/save time,
+      playback, scrubbing and memory for a 2-minute, 1080p, 10-layer scene.
+      All eight targets pass; measurements: `docs/performance-budget.md`.
 
 ## Phase 2 — Character rigging *(builds on pegs, pivots and curves)*
 
@@ -129,7 +121,7 @@ costs a week.
 - [x] Flip / rotate canvas; Wacom eraser-flip
 
 **Files & output**
-- [x] Save / load `.otoon` + autosave; canvas resize after drawing
+- [x] Save / load `.finca`, import `.otoon` + autosave; canvas resize after drawing
 - [x] Import images and video (frames + audio) as reference
 - [x] Export GIF / MP4 / WebM / PNG sequence / single frame
 - [x] Command-line batch render (`--render`)

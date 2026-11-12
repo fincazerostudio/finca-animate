@@ -6,7 +6,7 @@
  * Builds a 1920x1080 scene with ~5/6 raster and ~1/6 vector drawings full of
  * random line work, then times the app's real desktop save path
  * (IO.writeProjectTo -> atomic write + .bak) and open path
- * (IO.readProjectFrom -> parse + decode every drawing). Not part of npm test.
+ * (IO.readProjectFrom -> parse + lazy first-frame load). Not part of npm test.
  */
 'use strict';
 const { _electron } = require('playwright-core');
@@ -29,7 +29,7 @@ const mb = b => (b / 1048576).toFixed(1) + ' MB';
   }
   await page.waitForFunction(() => window.OT && window.OT.app && window.OT.app.ui, null, { timeout: 30000 });
   await page.evaluate(() => { const l = window.OT.app._launcher; if (l) l.close(); });
-  const scene = path.join(tmp, 'bench.otoon');
+  const scene = path.join(tmp, 'bench.finca');
   await app.evaluate(({ dialog }, p) => {
     dialog.showSaveDialog = async () => ({ canceled: false, filePath: p });
   }, scene);
@@ -87,25 +87,20 @@ const mb = b => (b / 1048576).toFixed(1) + ' MB';
   // ---- SAVE: real desktop path (serialize + stringify + IPC + atomic write) ----
   const save = await page.evaluate(async () => {
     const OT = window.OT, a = OT.app, fsd = window.OpenToonDesktop.fs;
-    const p = await fsd.saveDialog('bench.otoon');
+    const p = await fsd.saveDialog('bench.finca');
     const t0 = performance.now();
-    const data = OT.IO.serialize(a);
-    const t1 = performance.now();
-    const json = JSON.stringify(data);
-    const t2 = performance.now();
-    const r = await fsd.writeFile(p, json);
+    const r = await OT.IO.writeProjectTo(a, p);
     const t3 = performance.now();
-    // second full save (what the 20 s timer does after any edit) via the real API
     const t4 = performance.now();
-    await OT.IO.writeProjectTo(a, p);
+    await OT.IO.writeProjectTo(a, p, { background: true });
     const t5 = performance.now();
     // cost of encoding ONE raster drawing to PNG (what an incremental save would pay per changed cel)
     const cel = a.project.layers[0].cels[1];
     const t6 = performance.now();
     const png = cel.canvas.toDataURL();
     const t7 = performance.now();
-    return { ok: r.ok, serialize: t1 - t0, stringify: t2 - t1, write: t3 - t2, fullSave2: t5 - t4,
-             onePng: t7 - t6, onePngBytes: Math.round((png.length - 22) * 3 / 4), jsonChars: json.length };
+    return { ok: r.ok, total: t3 - t0, background: t5 - t4,
+             onePng: t7 - t6, onePngBytes: Math.round((png.length - 22) * 3 / 4) };
   });
   const size = fs.statSync(scene).size;
 
@@ -132,9 +127,8 @@ const mb = b => (b / 1048576).toFixed(1) + ' MB';
   const out = {
     drawings: N, scene: '1920x1080, 12 layers (10 raster, 2 vector)',
     fileSize: mb(size),
-    save: { serializeMs: Math.round(save.serialize), stringifyMs: Math.round(save.stringify),
-            ipcAtomicWriteMs: Math.round(save.write), totalMs: Math.round(save.serialize + save.stringify + save.write),
-            secondFullSaveMs: Math.round(save.fullSave2), onePngEncodeMs: +save.onePng.toFixed(1), onePngBytes: save.onePngBytes },
+    save: { totalMs: Math.round(save.total), backgroundSaveMs: Math.round(save.background),
+            onePngEncodeMs: +save.onePng.toFixed(1), onePngBytes: save.onePngBytes },
     open: { readParseDecodeMs: Math.round(open.read), untilFirstPaintMs: Math.round(open.firstPaint), celsLoaded: open.cels },
     memory: { rendererAfterBuild: mb(memBuilt), rendererIdleBeforeOpen: mb(memIdle), rendererAfterOpen: mb(memOpen),
               jsHeapIdle: mb(heapIdle), jsHeapAfterOpen: mb(heapOpen) }

@@ -6,7 +6,8 @@ Built as a zero-install desktop-style app — no build step, no server required.
 Finca Animate is based on [OpenToon Studio](https://github.com/helliott20/opentoon) by
 helliott20 and contributors, with Linux support and additional features. It follows
 upstream releases and is distributed under the same MIT license (see `LICENSE`).
-Project files keep OpenToon's `.otoon` format.
+Projects save as `.finca`, a self-contained ZIP container. Existing OpenToon
+`.otoon` projects still open; saving an imported project asks for a new `.finca` file.
 
 > **Built with AI assistance.** OpenToon is developed with the help of AI coding
 > assistants (Claude), upstream and in this Linux port. The Linux support is tested
@@ -127,21 +128,25 @@ per-user copy (see `BUILD.md`).
 - Frame-step, go to start/end
 
 **Project I/O**
-- Save / load `.otoon` project files (JSON, self-contained)
+- Save / load `.finca` projects with incremental drawing encoding and lazy raster loading
+- Import existing `.otoon` projects without overwriting the original
 - Autosave to browser storage (desktop: crash-safe saves with a `.bak`
   of the previous version, and File → Recover Autosave… with snapshot history)
 - Import reference images / image as layer
 
 **Export**
 - Animated GIF
-- WebM video
+- Offline video through ffmpeg: H.264, H.265, ProRes 4444, PNG MOV and VP9
+- MP4 / WebM real-time fallback when ffmpeg is unavailable
 - PNG image sequence (ZIP)
 - Single-frame PNG
 - From the command line, without opening the app:
-  `opentoon-studio --render scene.otoon -o out.mp4` (also `.webm`, `.gif`,
+  `opentoon-studio --render scene.finca -o out.mp4` (also `.webm`, `.gif`,
   `.zip` for a PNG sequence, `.png` for one frame; `--scale`, `--from`,
   `--to`, `--frame`, `--no-audio`; `--render --help` lists them). Video
-  records in real time and needs a graphical session (or `xvfb-run`).
+  renders frame by frame with ffmpeg and needs a graphical session (or `xvfb-run`).
+  ffmpeg is found via `FINCA_FFMPEG`, a bundled copy, or PATH; install it
+  separately when it is not included in the build.
 
 ## Keyboard shortcuts
 
@@ -189,7 +194,7 @@ Locked layers cannot be substituted. Undo and redo restore the exposures.
 
 Substitution reuses the original drawing: editing it changes every frame
 that references it. The drawing choices and exposure changes are saved in
-the existing `.otoon` format. A cross-project drawing/rig library remains
+the native `.finca` format. A cross-project drawing/rig library remains
 planned.
 
 ## Basic scripting console

@@ -174,13 +174,22 @@
 
       this.gridWrap = U.el('div', { class: 'tl-grid-wrap' });
       this.grid = U.el('canvas');
-      this.gridWrap.appendChild(this.grid);
+      // The spacer provides the full scroll range; the canvas only holds
+      // the visible pixels (long shots exceed Chromium's canvas limits).
+      this.gridSpace = U.el('div');
+      this.gridSpace.style.position = 'relative';
+      this.grid.style.position = 'absolute';
+      this.gridSpace.appendChild(this.grid);
+      this.gridWrap.appendChild(this.gridSpace);
       body.appendChild(this.gridWrap);
       this.gctx = this.grid.getContext('2d');
 
       this.gridWrap.addEventListener('scroll', () => {
         this.namesInner.style.transform = 'translateY(' + (-this.gridWrap.scrollTop) + 'px)';
+        this._renderGrid();
       });
+      this._gridResize = new ResizeObserver(() => this._renderGrid());
+      this._gridResize.observe(this.gridWrap);
       this._installShiftHoverPreview(this.namesInner, '.tl-name-row');
       this._installGridInput();
     }
@@ -334,6 +343,13 @@
       return (a && a.project && a.project.layers) ? a.project.layers.slice() : [];
     }
 
+    // Input coordinates stay relative to the full timeline, even though
+    // the canvas is positioned at the visible scroll origin.
+    _gridRect() {
+      const r = this.grid.getBoundingClientRect();
+      return { left: r.left - (this._gridX || 0), top: r.top - (this._gridY || 0) };
+    }
+
     _installGridInput() {
       const g = this.grid;
       const app = this.app;
@@ -341,7 +357,7 @@
 
       g.addEventListener('pointerdown', e => {
         try { g.setPointerCapture(e.pointerId); } catch (_) {}
-        const r = g.getBoundingClientRect();
+        const r = this._gridRect();
         const x = e.clientX - r.left, y = e.clientY - r.top;
         const f = frameAt(x);
         if (e.button === 2) {
@@ -501,7 +517,7 @@
       });
 
       g.addEventListener('pointermove', e => {
-        const r = g.getBoundingClientRect();
+        const r = this._gridRect();
         const x = e.clientX - r.left;
         if (this._fcDrag) {
           const nf = U.clamp(Math.round(x / this.cellW), 1, 4000);
@@ -554,7 +570,7 @@
       this.gridWrap.addEventListener('wheel', e => {
         if (!(e.ctrlKey || e.metaKey)) return;
         e.preventDefault();
-        const r = g.getBoundingClientRect();
+        const r = this._gridRect();
         const x = e.clientX - r.left;
         const frameUnderCursor = x / this.cellW;
         const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
@@ -609,7 +625,7 @@
       g.addEventListener('pointercancel', end);
 
       g.addEventListener('dblclick', e => {
-        const r = g.getBoundingClientRect();
+        const r = this._gridRect();
         const y = e.clientY - r.top;
         if (y <= this.headerH) return;
         const layer = this.rowToLayer(Math.floor((y - this.headerH) / this.rowH));
@@ -1209,11 +1225,19 @@
       const audioH = app.audioPeaks ? 38 : 0;
       const w = p.frameCount * cw + this.endPad, h = hh + L.length * rh + audioH;
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      this.grid.width = w * dpr; this.grid.height = h * dpr;
-      this.grid.style.width = w + 'px'; this.grid.style.height = h + 'px';
+      this.gridSpace.style.width = w + 'px'; this.gridSpace.style.height = h + 'px';
+      const sx = this.gridWrap.scrollLeft, sy = this.gridWrap.scrollTop;
+      const vw = Math.min(w, this.gridWrap.clientWidth || 1);
+      const vh = Math.min(h, this.gridWrap.clientHeight || 1);
+      this._gridX = sx; this._gridY = sy;
+      this.grid.style.left = sx + 'px'; this.grid.style.top = sy + 'px';
+      this.grid.width = Math.ceil(vw * dpr); this.grid.height = Math.ceil(vh * dpr);
+      this.grid.style.width = vw + 'px'; this.grid.style.height = vh + 'px';
       const c = this.gctx;
-      c.setTransform(dpr, 0, 0, dpr, 0, 0);
-      c.clearRect(0, 0, w, h);
+      c.setTransform(dpr, 0, 0, dpr, -sx * dpr, -sy * dpr);
+      c.clearRect(sx, sy, vw, vh);
+      const first = Math.max(0, Math.floor(sx / cw) - 1);
+      const last = Math.min(p.frameCount, Math.ceil((sx + vw) / cw) + 1);
 
       // No full-height playhead column tint. A blue wash across the whole
       // current column competes with the cel-run fills (also blue), the
@@ -1241,7 +1265,7 @@
       if (cw >= 8) {
         c.strokeStyle = '#ffffff07'; c.lineWidth = 1;
         c.beginPath();
-        for (let f = 1; f < p.frameCount; f++) {
+        for (let f = Math.max(1, first); f < last; f++) {
           if (f % F === 0) continue;   // second-boundary drawn separately
           const x = f * cw + 0.5;
           c.moveTo(x, hh); c.lineTo(x, rowsBottom);
@@ -1251,7 +1275,7 @@
       // Second-boundary lines (always on).
       c.strokeStyle = '#ffffff14'; c.lineWidth = 1;
       c.beginPath();
-      for (let f = F; f < p.frameCount; f += F) {
+      for (let f = Math.max(F, Math.ceil(first / F) * F); f < last; f += F) {
         const x = f * cw + 0.5;
         c.moveTo(x, hh); c.lineTo(x, rowsBottom);
       }
@@ -1279,7 +1303,7 @@
 
       c.font = '10px Segoe UI';
       c.textBaseline = 'middle';
-      for (let f = 0; f < p.frameCount; f++) {
+      for (let f = first; f < last; f++) {
         const x = f * cw;
         const onLabel = (f % labelStride === 0) || f === p.frameCount - 1;
         const onTick  = !onLabel && tickStride > 0 && (f % tickStride === 0);
@@ -1360,6 +1384,7 @@
       for (let r = 0; r < L.length; r++) {
         const layer = this.rowToLayer(r);
         const y = hh + r * rh;
+        if (y + rh < sy || y > sy + vh) continue;
         if (layer === app.activeLayer()) {
           c.fillStyle = '#ffffff0c';
           c.fillRect(0, y, w, rh);
@@ -1391,8 +1416,10 @@
           c.fillText('▶ ' + layer.name, bx + 8, y + rh / 2);
         }
         // exposure runs
-        let f = 0;
-        while (f < p.frameCount) {
+        let f = first;
+        // Include the beginning of a held run crossing the viewport edge.
+        while (f > 0 && layer.exposure[f] && layer.exposure[f - 1] === layer.exposure[f]) f--;
+        while (f < last) {
           const num = layer.exposure[f] || 0;
           if (!num) { f++; continue; }
           let e = f;
@@ -1521,7 +1548,7 @@
         const mid = ay + audioH / 2 + 4;
         c.fillStyle = '#4a9fd4cc';
         const peaks = app.audioPeaks;
-        for (let f = 0; f < p.frameCount && f < peaks.length; f++) {
+        for (let f = first; f < last && f < peaks.length; f++) {
           const amp = peaks[f] * (audioH / 2 - 6);
           if (amp > 0.4) c.fillRect(f * cw + cw / 2 - 1, mid - amp, 2, amp * 2);
         }

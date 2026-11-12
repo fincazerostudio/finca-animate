@@ -421,6 +421,12 @@
     h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
     return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36).padStart(11, '0');
   }
+  // Native hashing avoids long JavaScript scans of vector JSON on open
+  // and explicit saves. Keep only the digest, not another copy of strokes.
+  async function vectorDigest(bytes) {
+    const hash = await crypto.subtle.digest('SHA-256', bytes);
+    return Array.from(new Uint8Array(hash), b => b.toString(16).padStart(2, '0')).join('');
+  }
   const safeName = s => String(s).replace(/[^A-Za-z0-9_\-]/g, '_').replace(/^-/, '_') || '_';
 
   /* ---- where entries come from ----
@@ -570,31 +576,38 @@
         const auto = slot === 'auto' && c._auto && c._auto.id === autoId && liveSource(autoId) ? c._auto : null;
         const fileOk = c._file && liveSource(c._file.id);
         if (c.kind === 'vector') {
-          // Every stroke edit ends in rebuild() / appendStroke() / dirty(),
-          // which move the stamp; background saves trust it and skip the
-          // drawings that did not move. Other saves (Ctrl+S, Save As, closing)
-          // look at every drawing's strokes again.
-          const k = c._vec, ml = (c.eraserMarks || []).length;
-          const same = trust && k && k.stamp === c._stamp && k.strokes === c.strokes && k.sl === c.strokes.length &&
-            k.marks === c.eraserMarks && k.ml === ml;
-          let text = null, name;
-          if (same) name = k.name;
-          else {
-            text = JSON.stringify({ strokes: c.strokes || [], eraserMarks: c.eraserMarks || [] });
-            name = dir + safeName(num) + '-' + hashString(text) + '.json';
-          }
-          ref.src = name;
-          if (auto && auto.name === name) put({ name, from: { id: autoId, name } });
-          else if (fileOk && c._file.name === name) put({ name, from: c._file });
-          else {
-            if (text == null) text = JSON.stringify({ strokes: c.strokes || [], eraserMarks: c.eraserMarks || [] });
-            put({ name, text }); encoded++;
-          }
-          const vec = { stamp: c._stamp, strokes: c.strokes, sl: c.strokes.length, marks: c.eraserMarks, ml, name };
-          commits.push(id => {
-            c._vec = vec;
-            if (slot === 'file') { if (!c._file) trackCel(c); c._file = { id, name }; }
-            else if (slot === 'auto') c._auto = { id, name };
+          jobs.push(async () => {
+            // Every stroke edit ends in rebuild() / appendStroke() / dirty(),
+            // which move the stamp; background saves trust it and skip the
+            // drawings that did not move. Other saves (Ctrl+S, Save As, closing)
+            // look at every drawing's strokes again.
+            const k = c._vec, stamp = c._stamp, strokes = c.strokes, sl = c.strokes.length,
+              marks = c.eraserMarks, ml = (marks || []).length;
+            const same = trust && k && k.stamp === c._stamp && k.strokes === c.strokes && k.sl === c.strokes.length &&
+              k.marks === c.eraserMarks && k.ml === ml;
+            let text = null, name, contentHash = k && k.hash;
+            if (same) name = k.name;
+            else {
+              text = JSON.stringify({ strokes: c.strokes || [], eraserMarks: c.eraserMarks || [] });
+              // Imported archives may use any valid entry name. If their
+              // stroke JSON is unchanged, retain that name and copy its bytes
+              // instead of recompressing every vector on the first Ctrl+S.
+              contentHash = await vectorDigest(new TextEncoder().encode(text));
+              name = k && k.hash === contentHash ? k.name : dir + safeName(num) + '-' + hashString(text) + '.json';
+            }
+            ref.src = name;
+            if (auto && auto.name === name) put({ name, from: { id: autoId, name } });
+            else if (fileOk && c._file.name === name) put({ name, from: c._file });
+            else {
+              if (text == null) text = JSON.stringify({ strokes: c.strokes || [], eraserMarks: c.eraserMarks || [] });
+              put({ name, text }); encoded++;
+            }
+            const vec = { stamp, strokes, sl, marks, ml, name, hash: contentHash };
+            commits.push(id => {
+              c._vec = vec;
+              if (slot === 'file') { if (!c._file) trackCel(c); c._file = { id, name }; }
+              else if (slot === 'auto') c._auto = { id, name };
+            });
           });
           continue;
         }
@@ -814,17 +827,20 @@
     for (let i = 0; i < vec.length; i += 256) {
       const part = vec.slice(i, i + 256);
       const got = await readEntries(id, part.map(v => v[1]));
-      part.forEach(([cel, name], k) => {
+      await Promise.all(part.map(async ([cel, name], k) => {
+        let contentHash;
         try {
-          const d = JSON.parse(new TextDecoder().decode(got[k]));
+          const text = new TextDecoder().decode(got[k]);
+          const d = JSON.parse(text);
+          contentHash = await vectorDigest(got[k]);
           cel.strokes = d.strokes || [];
           cel.eraserMarks = Array.isArray(d.eraserMarks) ? d.eraserMarks : [];
           if (!detach) { cel._file = { id, name }; trackCel(cel); }
         } catch (e) { console.error('Drawing ' + name + ' could not be read'); }
         cel.dirty();
         if (!detach && cel._file) cel._vec = { stamp: cel._stamp, strokes: cel.strokes, sl: cel.strokes.length,
-          marks: cel.eraserMarks, ml: cel.eraserMarks.length, name };
-      });
+          marks: cel.eraserMarks, ml: cel.eraserMarks.length, name, hash: contentHash };
+      }));
     }
     // raster drawings stay where they are until they are needed
     if (detach) {

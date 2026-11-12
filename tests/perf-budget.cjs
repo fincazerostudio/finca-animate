@@ -127,12 +127,13 @@ function buildScene(file) {
 (async () => {
   const dir = fs.mkdtempSync(path.join(process.env.FINCA_PERF_DIR || os.tmpdir(), 'finca-perf-'));
   const scene = path.join(dir, 'perf.finca');
+  let app;
   try {
     const built = buildScene(scene);
     console.log('scene: ' + SECONDS + ' s, ' + W + 'x' + H + ', ' + LAYERS + ' layers, ' + built.drawings + ' drawings, ' +
       (built.bytes / 1048576).toFixed(0) + ' MB (built in ' + (built.ms / 1000).toFixed(1) + ' s)');
 
-    const app = await _electron.launch({ executablePath: EXE, args: ARGS, timeout: 60000,
+    app = await _electron.launch({ executablePath: EXE, args: ARGS, timeout: 60000,
       env: Object.assign({}, process.env, { XDG_CONFIG_HOME: path.join(dir, 'config'), OPENTOON_UPDATES: 'off' }) });
     let page = null;
     for (let i = 0; i < 150 && !page; i++) {
@@ -172,6 +173,27 @@ function buildScene(file) {
     const open = { readMs: median(opens.map(o => o.readMs)), firstPaintMs: median(opens.map(o => o.firstPaintMs)),
       completeMs: median(opens.map(o => o.completeMs)), runs: opens.map(o => o.firstPaintMs) };
     const memOpen = await rendererMB();
+
+    // Optional timings distinguish file IPC from main-thread UI work.
+    if (process.env.FINCA_PERF_PROFILE) await page.evaluate(() => {
+      window.__perf = {};
+      const wrap = (obj, key, label, async = false) => {
+        const original = obj[key];
+        obj[key] = function (...args) {
+          const t = performance.now();
+          const record = () => { const r = window.__perf[label] || (window.__perf[label] = { calls: 0, ms: 0 }); r.calls++; r.ms += performance.now() - t; };
+          const result = original.apply(this, args);
+          if (async) return Promise.resolve(result).finally(record);
+          record(); return result;
+        };
+      };
+      const a = window.OT.app;
+      wrap(a.timeline, '_renderGrid', 'timeline');
+      wrap(a.timeline, '_renderNames', 'names');
+      wrap(window.OT.CelMemory, 'trim', 'trim');
+      wrap(window.OT.IO, 'readEntry', 'entry', true);
+      wrap(a.stage, 'render', 'stage');
+    });
 
     /* save */
     const save = await page.evaluate(async (f) => {
@@ -215,6 +237,7 @@ function buildScene(file) {
       return { oneByOneMedianMs: +one[8].toFixed(1), parallelPerDrawingMs: +par.toFixed(1) };
     });
 
+    if (process.env.FINCA_PERF_PROFILE) console.log('profile before playback: ' + JSON.stringify(await page.evaluate(() => window.__perf)));
     /* playback */
     const play = await page.evaluate(async () => {
       const a = window.OT.app;
@@ -256,11 +279,13 @@ function buildScene(file) {
       times.sort((x, y) => x - y);
       return { medianMs: Math.round(times[10]), worstMs: Math.round(times[19]), syncDecodes: window.OT.Cel.stats.syncDecodes };
     });
+    if (process.env.FINCA_PERF_PROFILE) console.log('profile final: ' + JSON.stringify(await page.evaluate(() => window.__perf)));
     const memEnd = await rendererMB();
     const cel = await page.evaluate(() => window.OT.CelMemory.stats(window.OT.app.project));
 
     await page.evaluate(() => { window.OT.app.dirty = false; });
     await app.close();
+    app = null;
 
     const result = {
       scene: { seconds: SECONDS, size: W + 'x' + H, layers: LAYERS, drawings: built.drawings, fileMB: Math.round(built.bytes / 1048576) },
@@ -288,6 +313,7 @@ function buildScene(file) {
     console.log(over ? over + ' number(s) over budget' : 'All within budget.');
     process.exitCode = over ? 1 : 0;
   } finally {
+    if (app) await app.close().catch(() => {});
     fs.rmSync(dir, { recursive: true, force: true });
   }
 })().catch(e => { console.error(e); process.exit(1); });
