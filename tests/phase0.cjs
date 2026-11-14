@@ -176,12 +176,14 @@ const check = (name, ok, detail) => {
     await new Promise(r => setTimeout(r, 100));
     const warned = /newer version/.test(document.querySelector('.modal-body') ? document.querySelector('.modal-body').textContent : '');
     document.querySelectorAll('.modal-bg').forEach(m => m.remove());
+    const held = a.projectPath;                             // what the 20 s background save would write to
     a.saveProject();                                        // plain Save
-    for (let i = 0; i < 50 && a.projectPath === f; i++) await new Promise(r => setTimeout(r, 100));
-    return { newer: d.newer, warned, path: a.projectPath };
+    for (let i = 0; i < 50 && !a.projectPath; i++) await new Promise(r => setTimeout(r, 100));
+    return { newer: d.newer, warned, held, path: a.projectPath };
   }, newer);
   const calls = await app.evaluate(() => global.__saveCalls);
   check('opening a newer-format file warns', nv.newer && nv.warned, nv);
+  check('a newer-format file is not the scene\'s save target, so the background save cannot overwrite it', nv.held === null, nv);
   check('plain Save on it asks for a new name and leaves the original intact',
     calls === 1 && fs.readFileSync(newer).equals(before) && nv.path === path.join(tmp, 'picked.finca'), { calls, path: nv.path });
 

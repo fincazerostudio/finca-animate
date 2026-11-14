@@ -2,6 +2,10 @@
 
 - Native `.finca` projects: incremental drawing encoding, cropped raster
   storage, lazy loading, atomic saves, backups and autosave history.
+- Safer saves: free space is checked first, a full disk or failed
+  background save is reported on screen, backups are never left
+  half-written, and a project file that was cut short opens with whatever
+  is still readable.
 - Existing `.otoon` projects still open and save into new `.finca` files.
 - Raster drawings now share the configurable cel surface memory budget.
 - Frame-accurate ffmpeg export: H.264, H.265, ProRes 4444, PNG MOV and VP9,

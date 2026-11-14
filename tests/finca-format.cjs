@@ -162,7 +162,8 @@ const setSavePath = (app, p) => app.evaluate(({ dialog }, f) => {
     const before = { path: a.projectPath, from: a._importedFrom, hashes: window.sceneHashes() };
     a.dirty = true;
     a.saveProject();                       // plain Save: must go through the dialog to a .finca
-    for (let i = 0; i < 100 && !a.projectPath; i++) await window.tick(50);
+    // (generous: on some desktops a test window is throttled and encodes crawl)
+    for (let i = 0; i < 2400 && !a.projectPath; i++) await window.tick(50);
     return { msg: a.ui.msgEl && a.ui.msgEl.textContent, before, path: a.projectPath, from: a._importedFrom, recent: a.recentFiles.slice(), dirty: a.dirty,
              save: window.OT.IO.stats.lastSave, refused: await window.OpenToonDesktop.fs.fincaWrite(f, { scene: '{}', entries: [] }) };
   }, otoon);
@@ -522,6 +523,50 @@ const setSavePath = (app, p) => app.evaluate(({ dialog }, f) => {
     return ok;
   }, finca);
   check('the file opens after the crash, and the next save clears the stale temp file', rec && !fs.readdirSync(tmp).some(n => /\.tmp-/.test(n)), fs.readdirSync(tmp));
+
+  /* ---------- 10. a file that was cut short (interrupted copy / download) ---------- */
+  const cut = path.join(tmp, 'cut.finca'), whole = fs.readFileSync(finca);
+  fs.writeFileSync(cut, whole.subarray(0, Math.floor(whole.length * 0.7)));
+  const cutBytes = fs.readFileSync(cut);
+  await setSavePath(app, path.join(tmp, 'rescued.finca'));
+  const dmg = await page.evaluate(async (f) => {
+    const OT = window.OT, a = OT.app;
+    await window.openScene(f);
+    await window.tick(100);
+    const body = document.querySelector('.modal-body');
+    const warned = /incomplete/.test(body ? body.textContent : '');
+    document.querySelectorAll('.modal-bg').forEach(m => m.remove());
+    const held = a.projectPath, suggested = a._saveName();
+    await OT.IO.loadFrame(a, 0);
+    a.dirty = true;
+    a.saveProject();                                        // plain Save
+    for (let i = 0; i < 100 && !a.projectPath; i++) await window.tick(100);
+    const saved = a.projectPath;
+    if (saved) await window.openScene(saved);               // the rescued copy is a normal, complete file
+    return { warned, held, suggested, path: saved, layers: a.project.layers.length,
+             again: saved ? { path: a.projectPath, failed: OT.Cel.stats.failed, layers: a.project.layers.length } : null };
+  }, cut);
+  check('a cut-short .finca opens with a warning and what was still readable', dmg.warned && dmg.layers === 4, dmg);
+  check('the damaged file is never the save target: Save asks for a new name and leaves it untouched',
+    dmg.held === null && /cut-recovered\.finca$/.test(dmg.suggested) && dmg.path === path.join(tmp, 'rescued.finca') &&
+    fs.readFileSync(cut).equals(cutBytes) && zipEntries(dmg.path || finca).has('scene.json'), dmg);
+  check('the rescued copy reopens as an ordinary project (missing drawings are empty slots, nothing dangling)',
+    !!dmg.again && dmg.again.path === dmg.path && dmg.again.layers === 4, dmg.again);
+
+  /* ---------- 11. a background save that fails is shown, not swallowed ---------- */
+  const trouble = await page.evaluate(async () => {
+    const a = window.OT.app;
+    document.querySelectorAll('.save-toast').forEach(t => t.remove());
+    a._saveTroubleAt = 0;
+    a._saveTrouble(new Error('The disk is full, so the save could not finish.'), false);
+    const toast = document.querySelector('.save-toast.is-error');
+    const first = toast ? toast.textContent : '';
+    if (toast) toast.remove();
+    a._saveTrouble(new Error('again'), true);               // within the minute: no second toast
+    return { first, repeat: !!document.querySelector('.save-toast.is-error') };
+  });
+  check('a failed background save raises a visible "Save Failed" notice (once a minute at most)',
+    /Save Failed/i.test(trouble.first) && /disk is full/.test(trouble.first) && !trouble.repeat, trouble);
 
   await page.evaluate(() => { window.OT.app.dirty = false; });
   await app.close();

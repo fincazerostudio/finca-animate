@@ -45,7 +45,11 @@ function readAt(fd, pos, len) {
 }
 function writeAll(fd, buf, pos) {
   let done = 0;
-  while (done < buf.length) done += fs.writeSync(fd, buf, done, buf.length - done, pos + done);
+  while (done < buf.length) {
+    const n = fs.writeSync(fd, buf, done, buf.length - done, pos + done);
+    if (!n) throw Object.assign(new Error('could not write (disk full?)'), { code: 'ENOSPC' });
+    done += n;
+  }
 }
 const big = (b, o) => Number(b.readBigUInt64LE(o));
 
@@ -104,6 +108,38 @@ function readDirectory(fd) {
     }
     entries.set(name, { name, method, crc, csize, usize, offset });
     p += 46 + nl + xl + cl;
+  }
+  return entries;
+}
+
+// For a file whose table of contents is missing or damaged (cut short by an
+// interrupted copy or download): walk the entries from the start of the
+// file instead. Returns every entry that is completely there, in the same
+// shape as readDirectory. Contents are still checked against their CRC
+// when read. Files written with trailing "data descriptors" (some other zip
+// tools) cannot be walked this way and give back what came before.
+function salvageDirectory(fd) {
+  const size = fs.fstatSync(fd).size;
+  const entries = new Map();
+  let pos = 0;
+  while (pos + 30 <= size) {
+    const h = readAt(fd, pos, 30);
+    if (h.readUInt32LE(0) !== SIG_LOCAL || (h.readUInt16LE(6) & 8)) break;
+    const method = h.readUInt16LE(8), crc = h.readUInt32LE(14);
+    let csize = h.readUInt32LE(18), usize = h.readUInt32LE(22);
+    const nl = h.readUInt16LE(26), xl = h.readUInt16LE(28);
+    if (pos + 30 + nl + xl > size) break;
+    const rest = readAt(fd, pos + 30, nl + xl);
+    const name = rest.toString('utf8', 0, nl);
+    for (let x = nl; x + 4 <= rest.length;) {
+      const id = rest.readUInt16LE(x), len = rest.readUInt16LE(x + 2);
+      if (id === 1 && len >= 16 && x + 20 <= rest.length) { usize = big(rest, x + 4); csize = big(rest, x + 12); }
+      x += 4 + len;
+    }
+    const data = pos + 30 + nl + xl;
+    if (data + csize > size) break;                     // cut short inside this entry
+    entries.set(name, { name, method, crc, csize, usize, offset: pos, data });
+    pos = data + csize;
   }
   return entries;
 }
@@ -261,4 +297,4 @@ function createWriter(fd) {
   return w;
 }
 
-module.exports = { MIMETYPE, crc32, readDirectory, readEntry, dataOffset, createWriter, Writer };
+module.exports = { MIMETYPE, crc32, readDirectory, salvageDirectory, readEntry, dataOffset, createWriter, Writer };

@@ -310,7 +310,8 @@
           const desktop = !!(window.OpenToonDesktop && window.OpenToonDesktop.fs);
           if (this.projectPath && OT.IO.writeProjectTo) {
             OT.IO.writeProjectTo(this, this.projectPath, { background: true })
-              .catch(() => { OT.IO.autosave(this); });
+              .then(() => { this._saveTroubleAt = 0; })
+              .catch(e => { this._saveTrouble(e, false); OT.IO.autosave(this); });
           } else if (OT.IO.autosave(this) && !desktop) {
             this.dirty = false;
           }
@@ -451,13 +452,30 @@
         this._importedFrom = path;
         if (this.ui && !this._renderMode)
           this.ui.status('Opened an OpenToon project — saving creates a .finca file next to it and leaves the original untouched');
+      } else if (d.newer || d.damaged) {
+        // Never saved over, not by Ctrl+S and not by the background timer:
+        // the scene has no file of its own until it is saved under a new name.
+        this._protectedFrom = path;
       } else this.projectPath = path;
       this._addRecent(path);
+    }
+    // A background save or autosave did not work (disk full, drive unplugged,
+    // no permission...). Say so where it will be seen; repeat at most once a
+    // minute while it keeps failing.
+    _saveTrouble(e, recovery) {
+      const now = Date.now();
+      if (this._saveTroubleAt && now - this._saveTroubleAt < 60000) return;
+      this._saveTroubleAt = now;
+      const detail = (e && e.message) || 'unknown error';
+      if (!this.ui || this._renderMode) return;
+      this.ui.status((recovery ? 'Autosave failed' : 'Background save failed') + ' — your latest changes are NOT saved yet: ' + detail);
+      this.ui.showSaveToast(this.projectPath || 'autosave', { error: true, detail: detail });
     }
     // Suggested file name for the Save dialog.
     _saveName() {
       if (this.projectPath) return this.projectPath;
       if (this._importedFrom) return this._importedFrom.replace(/\.otoon$/i, '') + '.finca';
+      if (this._protectedFrom) return this._protectedFrom.replace(/\.finca$/i, '') + (this._newerSource ? '-copy' : '-recovered') + '.finca';
       return (this.project.name || 'untitled').replace(/[^\w\-]+/g, '_') + '.finca';
     }
 
@@ -2055,6 +2073,17 @@
       // A file from a newer build may hold data this one doesn't understand;
       // saving over it would drop that, so Save becomes Save As (see saveProject).
       this._newerSource = !!data.newer;
+      this._protectedFrom = null;
+      if (data.damaged && !this._renderMode) {
+        const d = data.damaged;
+        setTimeout(() => this.ui.modal('Damaged project file', U.el('div', { style: { maxWidth: '380px' } }, [
+          'This file is incomplete (it was probably cut short while being copied or downloaded). ' +
+          'What was still readable has been opened' +
+          (d.missing ? '; ' + d.missing + ' drawing' + (d.missing === 1 ? ' is' : 's are') + ' missing and will look empty' : '') +
+          '. The damaged file is left exactly as it is: Save will ask for a new file name. ' +
+          'If a ".bak" file sits next to it, that is the complete previous version.'
+        ])), 0);
+      }
       if (data.newer && !this._renderMode) {
         setTimeout(() => this.ui.modal('Newer project file', U.el('div', { style: { maxWidth: '360px' } }, [
           'This scene was saved by a newer version (file format ' + data.version + '; this build reads up to ' +
@@ -2169,6 +2198,7 @@
           .then(p => {
             this.projectPath = p;
             this._newerSource = false;            // it's our own file now
+            this._protectedFrom = null;
             if (this._importedFrom) {             // the .finca takes the .otoon's place in Recent
               const old = this._importedFrom;
               this.recentFiles = this.recentFiles.filter(r => r !== old);

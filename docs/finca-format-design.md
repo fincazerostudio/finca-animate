@@ -428,3 +428,91 @@ Expected after the change (estimates to be verified by the bench): saving
 after a small edit goes from 2.5-4 s of frozen UI to well under 0.1 s; the
 300-drawing scene opens to first paint in ~0.3 s instead of ~2.8 s; files
 shrink by about a quarter (no base64).
+
+## 10. Data-safety review (branch `feat/finca-save-safety`)
+
+A review of the built format against four ways work can be lost. The save
+code now lives in `electron/finca-store.js` (plain Node, no Electron) so
+all of this is unit-tested by `tests/finca-save.cjs`, part of `npm test`.
+
+### A crash or power cut in the middle of a save
+
+- **Already safe:** the new file is built under a temp name and only one
+  rename puts it in place, so the project file is always the old version
+  or the new one.
+- **Fixed:** the old `.bak` used to be deleted *before* the new backup
+  existed. On drives without hard links (FAT/exFAT USB sticks, some
+  network shares) the backup is a real copy, and a crash or full disk
+  during that copy could leave a cut-short `.bak` or none. The new backup
+  is now made under a temp name and swapped in only when complete.
+- **Fixed:** the new file is read back (table of contents and scene)
+  before it may replace anything, and the folder is flushed after the
+  rename so the save survives a power cut on Linux.
+- **Tested:** the saving process is killed at ten points (first write,
+  2 %, halfway, table of contents, before the flush, before/during/after
+  the backup, between backup and rename, after the rename). Each time the
+  project file is exactly the previous version or the complete new one,
+  and `.bak` is a complete earlier version.
+
+### The disk fills up
+
+- **Already safe:** a failed write removes the temp file and leaves the
+  project untouched.
+- **Worth knowing:** a save needs room for a whole second copy of the
+  file, because the old one stays until the new one is complete. With
+  `.bak` that is up to three copies for a moment. Autosave history for a
+  never-saved scene keeps up to eight more.
+- **Fixed:** free space is checked before anything is written, and the
+  message gives both sizes. A disk that fills up mid-write gives a plain
+  "the disk is full, the project file was not changed" message.
+- **Fixed:** if only the *backup* cannot be made, the save still goes
+  through (the new work matters more) and the older `.bak` is kept.
+- **Fixed:** a failed background save or autosave used to be written to
+  the developer console only. It now raises the "Save Failed" notice and a
+  status-bar message, at most once a minute while it keeps failing.
+
+### Very large scenes
+
+- **Already safe:** ZIP64, so more than 65,535 drawings and files over
+  4 GB work; drawings load one at a time.
+- **Tested:** 70,000 drawings saved, one changed, saved again, reopened.
+- **Accepted for now:** every save rewrites the whole file (unchanged
+  drawings are copied, not re-encoded). That is fast, but it is why the
+  disk-space rule above exists. The hybrid journal in section 3(c) remains
+  the answer if long shots make this a problem.
+- **Accepted for now:** unchanged drawings are copied without re-checking
+  their checksums, so a drawing damaged on disk stays damaged in the next
+  save and, after two saves, in `.bak` too. It is still *detected* when it
+  is opened (it is reported unreadable, never shown wrong).
+
+### A damaged or cut-short file
+
+- **Fixed (promised in 3(a), not built until now):** the table of
+  contents is at the end of the file, so a file cut short by an
+  interrupted copy or download used to be unopenable. The reader now walks
+  the entries from the start, opens what is complete, and reports how many
+  drawings are missing. Missing drawings become empty slots on the
+  timeline.
+- **Fixed:** a damaged file is never the save target. Save asks for a new
+  name (`<name>-recovered.finca`) and the damaged file is left as it is.
+  When nothing can be recovered, the error points at the `.bak`.
+- **Fixed (existing hole):** a file from a *newer* version had the same
+  protection for Ctrl+S, but the background save could still write over
+  it. Newer and damaged files now have no save target at all until saved
+  under a new name.
+- **Fixed:** if another program replaces the file while it is open and a
+  drawing the scene needs is gone, the save is refused *before* anything
+  is written, instead of after creating a temp file.
+
+### Keeping `.otoon` working
+
+- **Already safe:** `.otoon` files are opened read-only and never written;
+  tests confirm the bytes are unchanged. v1 and v2 both open.
+- **A one-way door, not data loss:** there is no export back to `.otoon`
+  yet, so a scene saved as `.finca` cannot be opened by OpenToon or by
+  Finca Animate builds older than this format. Keep the `.otoon` (the app
+  does) if the scene must stay shareable with them.
+- **Worth knowing for other tools:** on save, only what the scene refers
+  to is kept. Unknown top-level fields in `scene.json` (other than
+  `storyboard`) and zip entries outside `drawings/`, `media/` and
+  `thumbnail.png` are dropped.
