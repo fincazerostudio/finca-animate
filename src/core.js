@@ -455,10 +455,11 @@ window.OT = window.OT || {};
         this.rebuild(); return;
       }
       OT.Vector.renderStroke(this.ctx, stroke);
-      // Re-apply eraser cuts so the new stroke is also clipped by any
-      // existing marks (matches what a full rebuild would produce — the
-      // marks are applied AFTER strokes in renderCel).
-      const marks = this.eraserMarks;
+      // A new stroke is drawn after every erase pass, so no mark made with
+      // a pass cuts it (matches renderCel). Only marks from older files,
+      // which cut everything, are re-applied.
+      const marks = this.eraserMarks && OT.Vector.marksAreLegacy(this.eraserMarks)
+        ? this.eraserMarks.filter(m => m.g == null) : null;
       if (marks && marks.length) {
         const ctx = this.ctx;
         ctx.save();

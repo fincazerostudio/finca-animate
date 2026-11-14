@@ -175,6 +175,8 @@
           } else if (cd.k === 'v') {
             cel.strokes = cd.strokes || [];
             cel.eraserMarks = Array.isArray(cd.eraserMarks) ? cd.eraserMarks : [];
+            // older saves: marks cut what was drawn then, not what comes next
+            if (OT.Vector) OT.Vector.upgradeMarks(cel);
             cel.rebuild();
           } else {
             const img = await loadImage(cd.png);
@@ -835,6 +837,8 @@
           contentHash = await vectorDigest(got[k]);
           cel.strokes = d.strokes || [];
           cel.eraserMarks = Array.isArray(d.eraserMarks) ? d.eraserMarks : [];
+          // older saves: marks cut what was drawn then, not what comes next
+          if (OT.Vector) OT.Vector.upgradeMarks(cel);
           if (!detach) { cel._file = { id, name }; trackCel(cel); }
         } catch (e) { console.error('Drawing ' + name + ' could not be read'); }
         cel.dirty();

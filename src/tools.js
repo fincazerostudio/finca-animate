@@ -911,11 +911,15 @@
       const samples = pending.samples;
       pending.samples = [];
       const art = (OT.app && OT.app.artMode === 'color') ? 'color' : 'line';
+      // One erase pass per drag: its marks cut only the strokes that exist
+      // now, so anything drawn later over the erased spot shows.
+      if (pending.g == null) pending.g = pending.cel.kind === 'vector' ? V().beginErasePass(pending.cel) : 0;
+      const g = pending.g;
       const mixed = pending.cel.kind === 'vector' && pending.cel.strokes &&
         pending.cel.strokes.some(s => V().isColorArt(s)) && pending.cel.strokes.some(s => !V().isColorArt(s));
       if (mixed) {
         if (!Array.isArray(pending.cel.eraserMarks)) pending.cel.eraserMarks = [];
-        for (const s of samples) pending.cel.eraserMarks.push({ x: s.x, y: s.y, r: r, art });
+        for (const s of samples) pending.cel.eraserMarks.push({ x: s.x, y: s.y, r: r, art, g });
         pending.cel.rebuild();
         this.changed = true;
         pending.app.emit('render');
@@ -939,7 +943,7 @@
       // Pass 2: append to cel.eraserMarks (NOT modifying cel.strokes).
       // Each sample becomes a render-time destination-out circle.
       if (!Array.isArray(pending.cel.eraserMarks)) pending.cel.eraserMarks = [];
-      for (const s of samples) pending.cel.eraserMarks.push({ x: s.x, y: s.y, r: r, art });
+      for (const s of samples) pending.cel.eraserMarks.push({ x: s.x, y: s.y, r: r, art, g });
       this.changed = true;
       // Ship the destruction samples to anything that wants to mirror
       // the live erase visual (pen window via pencast). Pen window

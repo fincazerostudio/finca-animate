@@ -183,16 +183,25 @@
           tctx.globalAlpha = 1;
           tctx.clearRect(0, 0, tempW, tempH);
           tctx.setTransform(ctx.getTransform());
-          for (const st of cel.strokes)
-            if (st.type === 'fill' && (includeLassoHidden || !st._lassoHidden))
-              V.renderStroke(tctx, st);
-          for (const st of cel.strokes)
-            if (st.type !== 'fill' && (includeLassoHidden || !st._lassoHidden))
-              V.renderStroke(tctx, st);
-          if (isActive && wetStroke) { V.renderStroke(tctx, wetStroke); wetRendered = true; }
+          const shown = st => includeLassoHidden || !st._lassoHidden;
+          if (celMarks && !V.marksAreLegacy(celMarks)) {
+            // Erase passes: each mark cuts only the strokes drawn before
+            // it, and the stroke being drawn now is never cut, so drawing
+            // over an erased spot shows (and keeps showing after commit).
+            V.renderStrokesCut(tctx, cel.strokes.filter(st => st.type === 'fill' && shown(st)), celMarks);
+            V.renderStrokesCut(tctx, cel.strokes.filter(st => st.type !== 'fill' && shown(st)), celMarks);
+          } else {
+            for (const st of cel.strokes)
+              if (st.type === 'fill' && shown(st))
+                V.renderStroke(tctx, st);
+            for (const st of cel.strokes)
+              if (st.type !== 'fill' && shown(st))
+                V.renderStroke(tctx, st);
+            if (isActive && wetStroke && celMarks) { V.renderStroke(tctx, wetStroke); wetRendered = true; }
+          }
           tctx.globalCompositeOperation = 'destination-out';
           tctx.fillStyle = '#000';
-          if (celMarks) {
+          if (celMarks && V.marksAreLegacy(celMarks)) {
             for (const m of celMarks) {
               tctx.beginPath();
               tctx.arc(m.x, m.y, m.r, 0, Math.PI * 2);
@@ -206,6 +215,8 @@
               tctx.fill();
             }
           }
+          tctx.globalCompositeOperation = 'source-over';
+          if (isActive && wetStroke && !wetRendered) { V.renderStroke(tctx, wetStroke); wetRendered = true; }
           ctx.save();
           ctx.setTransform(1, 0, 0, 1, 0, 0);
           ctx.drawImage(temp, 0, 0);

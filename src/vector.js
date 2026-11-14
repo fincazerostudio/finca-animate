@@ -317,6 +317,22 @@
       cel.dirty();
       return;
     }
+    if (!marksAreLegacy(marks)) {
+      // Erase passes: each mark cuts only the strokes drawn before it, so
+      // art drawn over an erased spot shows. Colour and line art are cut by
+      // their own marks, as below.
+      ctx.clearRect(0, 0, cel.w, cel.h);
+      const visible = cel.strokes.filter(st => !st._lassoHidden);
+      renderStrokesCut(ctx, visible.filter(isColorArt), marks.filter(m => m.art !== 'line'));
+      const t = scratch(cel.w, cel.h), tx = t.getContext('2d');
+      tx.setTransform(1, 0, 0, 1, 0, 0);
+      tx.globalAlpha = 1; tx.globalCompositeOperation = 'source-over';
+      tx.clearRect(0, 0, cel.w, cel.h);
+      renderStrokesCut(tx, visible.filter(st => !isColorArt(st)), marks.filter(m => m.art !== 'color'));
+      ctx.drawImage(t, 0, 0);
+      cel.dirty();
+      return;
+    }
     punch(ctx, marks, m => m.art !== 'line');
     const t = scratch(cel.w, cel.h), tx = t.getContext('2d');
     tx.setTransform(1, 0, 0, 1, 0, 0);
@@ -346,6 +362,95 @@
     if (_scratch.width !== w) _scratch.width = w;
     if (_scratch.height !== h) _scratch.height = h;
     return _scratch;
+  }
+  let _runLayer = null;
+  function runLayer(w, h) {
+    if (!_runLayer) _runLayer = document.createElement('canvas');
+    if (_runLayer.width !== w) _runLayer.width = w;
+    if (_runLayer.height !== h) _runLayer.height = h;
+    return _runLayer;
+  }
+
+  /* --------------------------- erase passes ----------------------------
+     An eraser mark only cuts the strokes that existed when it was made, so
+     drawing over an erased spot draws again (it used to stay erased forever).
+     Each erase drag is a pass with a number g (1 + the highest on the cel),
+     and every stroke that has no stamp yet gets eg = g: the first pass that
+     came after it. Mark m cuts stroke st when st.eg <= m.g. The stamps live
+     on the strokes, so moving, deleting or reordering strokes keeps them
+     right. A mark without g (older files, before upgradeMarks) cuts
+     everything, the old behaviour. */
+  function marksAreLegacy(marks) {
+    for (const m of marks) if (m.g == null) return true;
+    return false;
+  }
+  // Drawings saved before erase passes: what was on the cel is cut by its
+  // old marks (as it was shown), and anything drawn from now on is not.
+  function upgradeMarks(cel) {
+    const marks = cel && cel.eraserMarks;
+    if (!marks || !marks.length || !marksAreLegacy(marks)) return false;
+    for (const m of marks) if (m.g == null) m.g = 0;
+    for (const st of cel.strokes || []) if (st.eg == null) st.eg = 0;
+    return true;
+  }
+  // Start an erase drag on a vector cel; returns the pass number for its marks.
+  function beginErasePass(cel) {
+    upgradeMarks(cel);
+    let g = 0;
+    for (const m of cel.eraserMarks || []) if (m.g > g) g = m.g;
+    g += 1;
+    for (const st of cel.strokes || []) if (st.eg == null) st.eg = g;
+    return g;
+  }
+  // How many of `marks` cut this stroke. Passes only grow, so the marks that
+  // cut a stroke are always "every mark from pass eg on": the count names
+  // the set, and strokes with the same count can share one punch.
+  function cutCount(st, marks, legacy, gs) {
+    if (st.eg == null) return legacy;
+    let lo = 0, hi = gs.length;                 // gs sorted ascending
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (gs[mid] < st.eg) lo = mid + 1; else hi = mid; }
+    return legacy + gs.length - lo;
+  }
+  // Draw `strokes` in order onto ctx (its current transform), each one cut
+  // only by the marks made after it. Runs of strokes cut by the same marks
+  // are drawn on a scratch layer, punched once and copied over.
+  function renderStrokesCut(ctx, strokes, marks) {
+    if (!marks.length) { for (const st of strokes) renderStroke(ctx, st); return; }
+    let legacy = 0;
+    const gs = [];
+    for (const m of marks) { if (m.g == null) legacy++; else gs.push(m.g); }
+    gs.sort((a, b) => a - b);
+    if (!gs.length) {                           // only old marks: cut everything
+      for (const st of strokes) renderStroke(ctx, st);
+      punch(ctx, marks, () => true);
+      return;
+    }
+    const w = ctx.canvas.width, h = ctx.canvas.height, xf = ctx.getTransform();
+    let run = [], runCount = -1;
+    const flush = () => {
+      if (!run.length) return;
+      if (runCount === 0) { for (const st of run) renderStroke(ctx, st); run = []; return; }
+      const k = runCount - legacy, minG = k ? gs[gs.length - k] : Infinity;
+      const l = runLayer(w, h), lx = l.getContext('2d');
+      lx.setTransform(1, 0, 0, 1, 0, 0);
+      lx.globalAlpha = 1; lx.globalCompositeOperation = 'source-over';
+      lx.clearRect(0, 0, w, h);
+      lx.setTransform(xf);
+      for (const st of run) renderStroke(lx, st);
+      punch(lx, marks, m => m.g == null || m.g >= minG);
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+      ctx.drawImage(l, 0, 0);
+      ctx.restore();
+      run = [];
+    };
+    for (const st of strokes) {
+      const n = cutCount(st, marks, legacy, gs);
+      if (n !== runCount) { flush(); runCount = n; }
+      run.push(st);
+    }
+    flush();
   }
 
   /* ----------------------------- hit testing ----------------------------- */
@@ -1087,6 +1192,7 @@
   OT.Vector = {
     simplify, smoothPts, smoothPath, samplesOf,
     renderStroke, renderCel, renderLine,
+    upgradeMarks, beginErasePass, renderStrokesCut, marksAreLegacy,
     strokeHit, strokeBounds, pointInPoly, isColorArt,
     eraseStroke, snapPoint, computeFill, mirrorStroke,
     detectShape, shapeToPts,
