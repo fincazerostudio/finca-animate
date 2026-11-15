@@ -1559,6 +1559,26 @@
       // body gridlines are now drawn upfront (above) so they sit BEHIND
       // the cel runs rather than on top, and so the per-frame + per-second
       // structure matches what artists expect from an X-sheet/dope-sheet.
+      // Storyboard mode: panels as a band along the top of the ruler (current
+      // panel brighter, scene starts in coral) and a strong line through
+      // every row where a panel starts, as on Storyboard Pro's timeline.
+      if (p.board && OT.Board) {
+        const cur = OT.Board.spanAt(p.board, cf);
+        let prevScene = null;
+        for (const s of OT.Board.spans(p.board)) {
+          const x0 = s.start * cw, x1 = (s.end + 1) * cw;
+          const sceneStart = s.panel.scene !== prevScene;
+          prevScene = s.panel.scene;
+          if (x1 < sx || x0 > sx + vw) continue;
+          c.fillStyle = s.panel.id === cur.panel.id ? '#4ba8e0' : (s.index % 2 ? '#3c4552' : '#4a5462');
+          c.fillRect(x0 + 1, 0, x1 - x0 - 2, 5);
+          if (s.start > 0) {
+            c.strokeStyle = sceneStart ? '#dd5038' : '#4ba8e0aa';
+            c.lineWidth = sceneStart ? 2 : 1.5;
+            c.beginPath(); c.moveTo(x0 + 0.5, 0); c.lineTo(x0 + 0.5, h); c.stroke();
+          }
+        }
+      }
       // Playhead line — cream to match the head, so the playhead reads
       // as one continuous "film leader" element from the header
       // marker straight down through every row.

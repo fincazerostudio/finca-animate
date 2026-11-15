@@ -1790,3 +1790,8 @@ body.board-mode #boardpanel{display:flex;flex:none;max-height:36vh;}
 .bp-field{padding:2px 8px 6px;}
 .bp-label{font-size:11px;color:var(--text-dim);margin-bottom:2px;}
 .bp-text{width:100%;box-sizing:border-box;resize:vertical;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:4px 6px;font:12px/1.35 inherit;}
+/* Storyboard mode adds the Panel section: let every sidebar panel keep its
+   own height and scroll the sidebar, instead of crushing Colour to a sliver. */
+body.board-mode #sidebar{overflow-y:auto;}
+body.board-mode #sidebar > .panel{flex:none;}
+body.board-mode #layerpanel{min-height:160px;}
