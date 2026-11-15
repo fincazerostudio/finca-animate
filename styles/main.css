@@ -1805,3 +1805,4 @@ body.pen-dragging, body.pen-dragging *{cursor:grabbing !important;}
 .fz-mode-btn + .fz-mode-btn{border-left:1px solid var(--line);}
 .fz-mode-btn:hover{color:var(--text);}
 .fz-mode-btn.is-on{background:var(--accent-lo);color:#fff;}
+body.pen-scrolling, body.pen-scrolling *{cursor:grabbing !important;user-select:none !important;}
