@@ -99,7 +99,11 @@ const u32be = (b, o) => b.readUInt32BE(o);
   const mp4ok = r.code === 0 && b.toString('latin1', 4, 8) === 'ftyp';
   const mp4unsupported = r.code === 1 && /MP4 recording is not supported/.test(r.out);
   check('mp4 (default output name): written, or a clear "not supported" error', mp4ok || mp4unsupported, r.out);
-  check('video is not recorded in real time (a 12-frame clip renders without waiting it out)', !/recording in real time/.test(r.out) || !mp4ok, r.out);
+  // Without ffmpeg the app falls back to recording in real time on purpose,
+  // so this only means something where ffmpeg is installed.
+  if (spawnSync('ffprobe', ['-version']).status === 0)
+    check('video is not recorded in real time (a 12-frame clip renders without waiting it out)', !/recording in real time/.test(r.out) || !mp4ok, r.out);
+  else console.log('     note: ffmpeg not installed; real-time fallback expected, check skipped');
   if (mp4unsupported) console.log('     note: this Electron build cannot record MP4; .webm works');
 
   // 2b. the same scene as a .finca (built here from the .otoon with the

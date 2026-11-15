@@ -41,6 +41,8 @@ jobs:
       - run: npm ci
       - name: Allow sandbox user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: ffmpeg (frame-accurate video export checks)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - name: Build AppImage + tar.gz
         run: npx electron-builder --linux --publish never
       - name: Packaged-app tests
