@@ -158,6 +158,7 @@
       const D = window.OpenToonDesktop && window.OpenToonDesktop.fzTheme;
       let saved = null;
       try { saved = localStorage.getItem('finca.theme'); } catch (e) { /* private window */ }
+      try { this.art = localStorage.getItem('finca.themeArt') !== '0'; } catch (e) { /* default on */ }
       if (D) {
         try { this.fz = await D.get(); } catch (e) { this.fz = null; }
         D.onChange(t => { this.fz = t; if (this.choice === 'fz') this.apply(); });
@@ -182,7 +183,32 @@
       if (this.choice === 'fz') return fromFZ(this.fz);
       return PRESETS[this.choice] || null;
     },
-    apply() { applyTheme(this.current()); },
+    apply() { applyTheme(this.current()); this._stageArt(); },
+    // The theme's artwork behind the stage, under Kitty's tint (FZ hands Kitty
+    // the same picture and background_tint). Only with Follow FZ Theme.
+    art: true,
+    setArt(on) {
+      this.art = !!on;
+      try { localStorage.setItem('finca.themeArt', on ? '1' : '0'); } catch (e) { /* ignore */ }
+      this._stageArt();
+      const app = OT.app;
+      if (app && app.ui) app.ui.status('Theme artwork on the stage ' + (on ? 'on' : 'off'));
+    },
+    hasArt() { return this.choice === 'fz' && !!(this.fz && this.fz.artwork); },
+    _stageArt() {
+      const vp = document.getElementById('viewport');
+      if (!vp) return;
+      const t = this.current();
+      if (!this.art || !this.hasArt() || !t) {
+        vp.style.removeProperty('background');
+        document.documentElement.classList.remove('has-stage-art');
+        return;
+      }
+      const bg = parse(t.ramp[1]), tint = Math.max(0, Math.min(1, +this.fz.artwork.tint || 0.8));
+      const wash = 'rgba(' + [bg.r, bg.g, bg.b].join(',') + ',' + tint + ')';
+      vp.style.background = 'linear-gradient(' + wash + ',' + wash + '), url("' + this.fz.artwork.url + '") center / cover no-repeat';
+      document.documentElement.classList.add('has-stage-art');
+    },
     // exposed for tests and the mockup renderer
     mapper, fromFZ, presets: PRESETS
   };

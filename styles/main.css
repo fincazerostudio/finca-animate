@@ -1951,7 +1951,7 @@ body.pen-dragging, body.pen-dragging *{cursor:grabbing !important;}
 .fz-mode-btn.is-on{background:var(--accent-lo);color:var(--c-ffffff);}
 body.pen-scrolling, body.pen-scrolling *{cursor:grabbing !important;user-select:none !important;}
 /* Tool properties bar across the top of the stage (ui.js _buildToolBar) */
-#toolprops{display:flex;align-items:center;gap:14px;flex:none;min-height:38px;padding:4px 12px;
+#toolprops{display:flex;align-items:center;gap:14px;flex:none;min-height:38px;padding:4px 12px;scrollbar-width:none;
   background:var(--panel);border-bottom:1px solid var(--edge);overflow-x:auto;overflow-y:hidden;white-space:nowrap;font-size:12px;color:var(--text)}
 body.clean-view #toolprops{display:none;}
 .tp-tool{display:flex;align-items:center;gap:6px;font-weight:600;color:var(--text);padding-right:4px}

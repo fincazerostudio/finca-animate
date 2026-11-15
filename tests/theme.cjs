@@ -45,6 +45,16 @@ const cp = require('child_process'), path = require('path');
     out.live = { bg: v('--bg'), accent: v('--accent'), scheme: root.style.colorScheme };
     let saved = null; try { saved = localStorage.getItem('finca.theme'); } catch (e) {}
     out.saved = saved;
+    // the theme's artwork behind the stage, tinted like Kitty
+    const px = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    T.fz = Object.assign({}, W, { artwork: { url: px, tint: 0.8, key: 'k' } }); T.set('fz');
+    const vp = document.getElementById('viewport');
+    const artOn = { bg: vp.style.background, cls: root.classList.contains('has-stage-art') };
+    T.setArt(false);
+    const artOff = { bg: vp.style.background, cls: root.classList.contains('has-stage-art') };
+    T.setArt(true); T.set('graphite');
+    const artOther = vp.style.background;
+    out.art = { on: /url\(/.test(artOn.bg) && /rgba\(21, 16, 29, 0\.8\)/.test(artOn.bg) && artOn.cls, off: !artOff.bg && !artOff.cls, other: !artOther };
     T.set('classic');
     out.back = { bg: v('--bg'), inline: root.style.getPropertyValue('--bg'), c: v(CK), cv: CV, probe: probe('#272b32') };
     // the View menu lists the themes
@@ -62,6 +72,8 @@ const cp = require('child_process'), path = require('path');
   checks.push(['the choice is remembered', r.saved === 'fz']);
   checks.push(['back to Classic restores everything', r.back.bg === '#14161a' && !r.back.inline && r.back.c === r.back.cv && r.back.probe === '#272b32']);
   checks.push(['View menu lists the themes', r.menu]);
+  checks.push(['Follow FZ theme puts the theme artwork behind the stage, tinted like Kitty', r.art && r.art.on]);
+  checks.push(['the artwork toggle removes it, and other themes have none', r.art && r.art.off && r.art.other]);
   checks.push(['no page errors', errors.length === 0]);
 
   let fail = 0;

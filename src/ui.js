@@ -181,7 +181,11 @@
               (id === 'fz' && OT.Theme.fz ? ' (' + OT.Theme.fz.name + ')' : ''),
             fn: () => OT.Theme.set(id),
             enabled: id !== 'fz' || !!OT.Theme.fz
-          })).concat([{ sep: 1 }]) : []),
+          })).concat([{
+            label: (OT.Theme.art ? '✓ ' : '') + 'Theme Artwork on Stage',
+            fn: () => OT.Theme.setArt(!OT.Theme.art),
+            enabled: OT.Theme.hasArt()
+          }, { sep: 1 }]) : []),
           { label: 'Layout: Drawing', fn: () => a.applyWorkspace('drawing') },
           { label: 'Layout: Animation', fn: () => a.applyWorkspace('animation') },
           { label: 'Layout: Compact', fn: () => a.applyWorkspace('compact') },

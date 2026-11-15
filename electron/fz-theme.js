@@ -21,6 +21,28 @@ const { execFile } = require('child_process');
 const HOME = os.homedir();
 const STATE_DIR = path.join(process.env.XDG_STATE_HOME || path.join(HOME, '.local', 'state'), 'fz');
 const FZ_ROOT = process.env.FINCA_FZ_ROOT || path.join(HOME, 'Projects', 'finca-zero-command-center');
+// FZ renders each theme's terminal artwork here (Kitty's background_image)
+const RENDER_DIR = path.join(process.env.XDG_CACHE_HOME || path.join(HOME, '.cache'), 'fz', 'theme');
+
+// The theme's artwork and tint, exactly as FZ hands them to Kitty, when the
+// render in ~/.cache/fz/theme/current is for theme `id` (a switch renders it
+// a moment after the state changes).
+function artwork(id) {
+  try {
+    const conf = fs.readFileSync(path.join(RENDER_DIR, 'current', 'kitty-theme.conf'), 'utf8');
+    const forId = (conf.match(/theme:\s*([A-Za-z0-9_]+)/) || [])[1];
+    if (id && forId !== id) return null;
+    const img = (conf.match(/^background_image\s+(.+)$/m) || [])[1];
+    if (!img) return null;
+    const tint = parseFloat((conf.match(/^background_tint\s+([\d.]+)/m) || [])[1] || '0.8');
+    const file = img.trim();
+    const ext = path.extname(file).toLowerCase();
+    const mime = ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.webp' ? 'image/webp' : 'image/png';
+    const st = fs.statSync(file);
+    if (st.size > 24 * 1024 * 1024) return null;
+    return { url: 'data:' + mime + ';base64,' + fs.readFileSync(file).toString('base64'), tint, key: id + ':' + st.mtimeMs + ':' + st.size };
+  } catch (e) { return null; }
+}
 
 function themeRoots() {
   const extra = process.env.FZ_THEME_EXTRA_ROOTS != null
@@ -64,7 +86,7 @@ function fast() {
     const palette = {};
     for (const [k, v] of Object.entries(t.colors)) if (KEYS[k]) palette[KEYS[k]] = v;
     if (!palette.textPrimary) return null;
-    return { id, name: t.meta.display_name || id, palette };
+    return { id, name: t.meta.display_name || id, palette, artwork: artwork(id) };
   }
   return null;
 }
@@ -78,7 +100,7 @@ function catalog() {
       try {
         const data = JSON.parse(stdout).data;
         const t = (data.themes || []).find(x => x.id === (data.state && data.state.activeTheme));
-        resolve(t ? { id: t.id, name: t.name, palette: t.palette } : null);
+        resolve(t ? { id: t.id, name: t.name, palette: t.palette, artwork: artwork(t.id) } : null);
       } catch (e) { resolve(null); }
     });
   });
@@ -89,19 +111,18 @@ function get() {
   return catalog();
 }
 
-// cb(theme) whenever the desktop theme changes; returns a stop function
+// cb(theme) whenever the desktop theme or its artwork changes; returns a stop function
 function watch(cb) {
-  let timer = null, last = null, w = null;
-  const check = () => get().then(t => { if (t && t.id !== last) { last = t.id; cb(t); } });
-  get().then(t => { last = t ? t.id : null; });
-  try {
-    w = fs.watch(STATE_DIR, (ev, name) => {
-      if (name && name !== 'theme') return;
-      clearTimeout(timer);
-      timer = setTimeout(check, 200);
-    });
-  } catch (e) { return () => {}; }
-  return () => { clearTimeout(timer); if (w) w.close(); };
+  let timer = null, last = null;
+  const key = t => t ? t.id + '|' + (t.artwork ? t.artwork.key : '') : null;
+  const check = () => get().then(t => { const k = key(t); if (t && k !== last) { last = k; cb(t); } });
+  const soon = () => { clearTimeout(timer); timer = setTimeout(check, 250); };
+  get().then(t => { last = key(t); });
+  const watchers = [];
+  try { watchers.push(fs.watch(STATE_DIR, (ev, name) => { if (!name || name === 'theme') soon(); })); } catch (e) { /* no FZ state */ }
+  // the artwork is rendered a moment after the switch: watch the render folder too
+  try { watchers.push(fs.watch(RENDER_DIR, () => soon())); } catch (e) { /* not rendered yet */ }
+  return () => { clearTimeout(timer); for (const w of watchers) w.close(); };
 }
 
 module.exports = { get, watch, _readToml: readToml };
