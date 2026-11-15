@@ -21,6 +21,11 @@ contextBridge.exposeInMainWorld('OpenToonDesktop', {
   openReleasePage: () => ipcRenderer.invoke('opentoon:open-release-page'),
   // tell the main process the app has finished booting (dismisses the splash)
   signalReady: () => ipcRenderer.send('app:ready'),
+  // the Finca Zero desktop theme: palette now, and every switch after
+  fzTheme: {
+    get: () => ipcRenderer.invoke('finca:fz-theme'),
+    onChange: cb => ipcRenderer.on('finca:fz-theme-changed', (_e, t) => cb(t))
+  },
   splashProgress: (pct, label) => ipcRenderer.send('app:loading', { pct: pct, label: label }),
   // a project double-clicked while the app is already running
   onOpenFile: cb => ipcRenderer.on('opentoon:open-file', (_e, p) => cb(p)),

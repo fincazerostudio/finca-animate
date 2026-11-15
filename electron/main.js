@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const FincaZip = require('./finca-zip.js');
 const Ffmpeg = require('./ffmpeg.js');
+const FzTheme = require('./fz-theme.js');
 
 const isDev = process.argv.includes('--dev') || !app.isPackaged;
 let win = null;
@@ -656,6 +657,14 @@ function setupIpc() {
   ipcMain.handle('opentoon:get-version', () => app.getVersion());
   ipcMain.handle('opentoon:update-policy', () => (isDev ? 'off' : UPDATE_POLICY));
   setupUpdateIpc();
+
+  /* ---- Finca Zero desktop theme (View > Theme > Follow FZ theme) ---- */
+  ipcMain.handle('finca:fz-theme', () => FzTheme.get());
+  FzTheme.watch(t => {
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (!w.isDestroyed()) w.webContents.send('finca:fz-theme-changed', t);
+    }
+  });
 
   /* ---- project file IO ---- */
   const FILTER_FINCA = { name: 'Finca Animate Project (*.finca)', extensions: ['finca'] };

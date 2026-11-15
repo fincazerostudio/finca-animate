@@ -265,6 +265,7 @@
       this.ui = new OT.UI(this);
       this.colorPanel = new OT.ColorPanel(this, document.getElementById('colorpanel'));
       this.timeline = new OT.Timeline(this);
+      if (OT.Theme) OT.Theme.init(this);             // View > Theme (Follow FZ theme, presets)
       this.penCast = new OT.PenCast(this);   // secondary pen-display window
       this.celMemory = OT.CelMemory.attach(this);   // cel surface budget
       if (OT.Board) OT.Board.install(this);          // storyboard mode (project.board)
