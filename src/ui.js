@@ -382,6 +382,7 @@
         const v = parseFloat(range.value);
         valEl.textContent = U.round(v, 2);
         onInput(v);
+        if (this._syncToolBar) this._syncToolBar();   // keep the stage's tool bar in step
       });
       wrap._range = range; wrap._val = valEl;
       return { wrap, range, valEl };
@@ -414,7 +415,7 @@
           s.shapeSnapHoldMs, v => s.shapeSnapHoldMs = v));
       }
     }
-    _buildToolOpts() {
+    _buildToolOpts(skipBar) {
       const p = document.getElementById('toolopts');
       const a = this.app, s = a.settings, t = a.tools.active.name;
       p.innerHTML = '';
@@ -491,8 +492,71 @@
       }
       if (t === 'brush' || t === 'pencil' || t === 'eraser')
         body.appendChild(this._brushPresetsUI());
+      if (!skipBar) this._buildToolBar();
     }
 
+    /* Tool properties across the top of the stage (Harmony style): the main
+       settings of the tool in hand, always in reach while drawing. Same
+       settings as the sidebar's tool options, kept in step both ways. */
+    _toolBarSpec(t) {
+      const a = this.app, isVec = a.activeLayer() && a.activeLayer().type === 'vector';
+      const S = (label, min, max, step, key) => ({ label, min, max, step, key });
+      return ({
+        brush: [S('Size', 1, 100, 1, 'brushSize'), S('Opacity', 0.05, 1, 0.01, 'brushOpacity'), S('Smoothing', 0, 1, 0.01, 'smoothing')],
+        pencil: [S('Size', 1, 30, 1, 'pencilSize'), S('Opacity', 0.05, 1, 0.01, 'pencilOpacity'), S('Smoothing', 0, 1, 0.01, 'smoothing')],
+        eraser: [S('Size', 1, 150, 1, 'eraserSize'), S('Opacity', 0.05, 1, 0.01, 'eraserOpacity')],
+        fill: isVec ? [S('Gap closing', 0, 30, 1, 'fillGap')] : [S('Tolerance', 0, 120, 1, 'fillTolerance')],
+        rect: [S('Line', 1, 60, 1, 'shapeStrokeWidth')],
+        ellipse: [S('Line', 1, 60, 1, 'shapeStrokeWidth')],
+        line: [S('Line', 1, 60, 1, 'shapeStrokeWidth')]
+      })[t] || [];
+    }
+    _buildToolBar() {
+      const bar = document.getElementById('toolprops');
+      if (!bar) return;
+      const a = this.app, s = a.settings, t = a.tools.active.name;
+      bar.innerHTML = '';
+      const icon = this.toolBtns && this.toolBtns[t] ? this.toolBtns[t].innerHTML : '';
+      bar.appendChild(el('div', { class: 'tp-tool', title: TOOL_NAME[t] || t, html: icon + '<span>' + (TOOL_NAME[t] || t) + '</span>' }));
+      const sw = el('button', { class: 'tp-colour', type: 'button', title: 'Colour (open the Colour panel)' });
+      sw.style.background = a.color;
+      sw.addEventListener('click', () => {
+        const cp = document.getElementById('colorpanel');
+        if (cp) { cp.classList.remove('collapsed'); cp.scrollIntoView({ block: 'nearest' }); }
+      });
+      bar.appendChild(sw);
+      this._toolBarInputs = [];
+      for (const it of this._toolBarSpec(t)) {
+        const val = el('span', { class: 'tp-val', text: U.round(s[it.key], 2) });
+        const range = el('input', { type: 'range', min: it.min, max: it.max, step: it.step, value: s[it.key], 'aria-label': it.label });
+        range.addEventListener('input', () => {
+          const v = parseFloat(range.value);
+          s[it.key] = v; val.textContent = U.round(v, 2);
+        });
+        // on release: redraw the sidebar's copy (not this bar, so the drag is not lost)
+        range.addEventListener('change', () => { this._buildToolOpts(true); a._savePrefs && a._savePrefs(); });
+        this._toolBarInputs.push({ range, val, key: it.key });
+        bar.appendChild(el('label', { class: 'tp-item' }, [el('span', { class: 'tp-label' }, [it.label]), range, val]));
+      }
+      if (t === 'brush' || t === 'pencil' || t === 'eraser') {
+        const sel = el('select', { class: 'tp-presets', 'aria-label': 'Brush preset' },
+          [el('option', { value: '' }, ['Brush preset…'])].concat((a.brushPresets || []).map(p => el('option', { value: p.id }, [p.name]))));
+        sel.addEventListener('change', () => { if (sel.value) a.applyBrushPreset(sel.value); });
+        bar.appendChild(sel);
+      }
+      if (!this._toolBarColourHooked) {
+        this._toolBarColourHooked = true;
+        a.on('colorchange', () => { const c = document.querySelector('#toolprops .tp-colour'); if (c) c.style.background = a.color; });
+        a.on('layerselect', () => this._buildToolBar());   // fill: vector gap vs raster tolerance
+      }
+    }
+    _syncToolBar() {
+      const s = this.app.settings;
+      for (const i of this._toolBarInputs || []) {
+        if (document.activeElement === i.range) continue;
+        i.range.value = s[i.key]; i.val.textContent = U.round(s[i.key], 2);
+      }
+    }
     // Saved brush presets — chips that apply a named tool configuration.
     _brushPresetsUI() {
       const a = this.app;

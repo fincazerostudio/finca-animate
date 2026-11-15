@@ -1950,3 +1950,28 @@ body.pen-dragging, body.pen-dragging *{cursor:grabbing !important;}
 .fz-mode-btn:hover{color:var(--text);}
 .fz-mode-btn.is-on{background:var(--accent-lo);color:var(--c-ffffff);}
 body.pen-scrolling, body.pen-scrolling *{cursor:grabbing !important;user-select:none !important;}
+/* Tool properties bar across the top of the stage (ui.js _buildToolBar) */
+#toolprops{display:flex;align-items:center;gap:14px;flex:none;min-height:38px;padding:4px 12px;
+  background:var(--panel);border-bottom:1px solid var(--edge);overflow-x:auto;overflow-y:hidden;white-space:nowrap;font-size:12px;color:var(--text)}
+body.clean-view #toolprops{display:none;}
+.tp-tool{display:flex;align-items:center;gap:6px;font-weight:600;color:var(--text);padding-right:4px}
+.tp-tool svg{width:18px;height:18px}
+.tp-colour{width:26px;height:26px;border-radius:6px;border:2px solid var(--panel3);cursor:pointer;flex:none}
+.tp-item{display:flex;align-items:center;gap:8px}
+.tp-label{color:var(--text-dim)}
+.tp-item input[type=range]{width:120px;height:22px}
+.tp-val{min-width:30px;text-align:right;font-variant-numeric:tabular-nums;color:var(--text)}
+.tp-presets{background:var(--bg);color:var(--text);border:1px solid var(--panel3);border-radius:5px;padding:4px 6px;font:inherit;max-width:180px}
+/* Pie menu (src/pie-menu.js): a ring of tools around the pen tip */
+.pie{position:fixed;width:0;height:0;z-index:9000;}
+.pie-centre{position:absolute;left:-38px;top:-38px;width:76px;height:76px;border-radius:50%;border:1px solid var(--panel3);
+  background:var(--panel);color:var(--text);font:600 11px var(--body,inherit);letter-spacing:.04em;cursor:pointer;
+  box-shadow:0 6px 22px var(--c-00000077);display:grid;place-items:center;transform:scale(.6);opacity:0;transition:transform .12s ease,opacity .12s ease}
+.pie-item{position:absolute;width:52px;height:52px;margin:-26px 0 0 -26px;border-radius:50%;border:1px solid var(--panel3);
+  background:var(--panel2);color:var(--text);cursor:pointer;display:grid;place-items:center;box-shadow:0 4px 14px var(--c-00000066);
+  transform:scale(.4);opacity:0;transition:transform .14s ease,opacity .14s ease,background-color .1s}
+.pie-item svg{width:24px;height:24px}
+.pie-item:hover,.pie-item:focus-visible{background:var(--accent);color:var(--c-ffffff);border-color:var(--accent);outline:none}
+.pie-item.is-on{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-glow),0 4px 14px var(--c-00000066)}
+.pie.is-open .pie-item,.pie.is-open .pie-centre{transform:scale(1);opacity:1}
+@media (prefers-reduced-motion: reduce){.pie-item,.pie-centre{transition:none}}

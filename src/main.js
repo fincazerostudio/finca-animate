@@ -138,6 +138,7 @@
     { id: 'shift-trace', label: 'Shift & Trace', cat: 'View', def: 'alt+s', noRepeat: 1, run: a => a.toggleShiftTrace() },
     { id: 'art-toggle', label: 'Toggle Line Art / Colour Art', cat: 'Tools', def: 'alt+c', noRepeat: 1, run: a => a.toggleArtMode() },
     { id: 'clean-view', label: 'Clean canvas (hide panels)', cat: 'View', def: 'tab', prevent: 1, noRepeat: 1, run: a => a.toggleCleanView() },
+    { id: 'pie-menu', label: 'Tool ring at the pointer (or tap the pen side button)', cat: 'Tools', def: 'q', noRepeat: 1, run: a => { if (a.pie) a.pie.openAtPointer(); } },
     // Storyboard mode (src/board.js); outside a storyboard they do nothing.
     { id: 'board-new-panel', label: 'New panel', cat: 'Storyboard', def: 'n', noRepeat: 1, run: a => { if (OT.Board.on(a.project)) OT.Board.Ops.newPanel(a); } },
     { id: 'board-prev-panel', label: 'Previous panel', cat: 'Storyboard', def: 'pageup', prevent: 1, run: a => { if (OT.Board.on(a.project)) OT.Board.Ops.go(a, -1); } },
@@ -266,6 +267,7 @@
       this.colorPanel = new OT.ColorPanel(this, document.getElementById('colorpanel'));
       this.timeline = new OT.Timeline(this);
       if (OT.Theme) OT.Theme.init(this);             // View > Theme (Follow FZ theme, presets)
+      if (OT.PieMenu) OT.PieMenu.install(this);      // pen side-button tap / Q: ring of tools
       this.penCast = new OT.PenCast(this);   // secondary pen-display window
       this.celMemory = OT.CelMemory.attach(this);   // cel surface budget
       if (OT.Board) OT.Board.install(this);          // storyboard mode (project.board)
