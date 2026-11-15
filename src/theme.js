@@ -155,7 +155,8 @@
     choice: 'classic',
     fz: null,                   // last FZ desktop theme seen
     async init(app) {
-      const D = window.OpenToonDesktop && window.OpenToonDesktop.fzTheme;
+      // main window or pen window bridge
+      const D = (window.OpenToonDesktop && window.OpenToonDesktop.fzTheme) || (window.OpenToonPen && window.OpenToonPen.fzTheme);
       let saved = null;
       try { saved = localStorage.getItem('finca.theme'); } catch (e) { /* private window */ }
       try { this.art = localStorage.getItem('finca.themeArt') !== '0'; } catch (e) { /* default on */ }
@@ -166,6 +167,11 @@
       // first run on a Finca Zero desktop: follow it; elsewhere Classic
       this.choice = saved || (this.fz ? 'fz' : 'classic');
       this.apply();
+      // a theme picked in another window (main <-> pen window) applies here too
+      window.addEventListener('storage', e => {
+        if (e.key === 'finca.theme' && e.newValue) { this.choice = e.newValue; this.apply(); }
+        else if (e.key === 'finca.themeArt') { this.art = e.newValue !== '0'; this._stageArt(); }
+      });
     },
     set(choice) {
       this.choice = choice;
@@ -184,6 +190,8 @@
       return PRESETS[this.choice] || null;
     },
     apply() { applyTheme(this.current()); this._stageArt(); },
+    // an interface colour in the current theme (for canvases drawn in code)
+    c(s) { return remap(s); },
     // The theme's artwork behind the stage, under Kitty's tint (FZ hands Kitty
     // the same picture and background_tint). Only with Follow FZ Theme.
     art: true,

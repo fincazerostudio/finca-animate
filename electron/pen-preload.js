@@ -5,6 +5,11 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('OpenToonPen', {
+  // the Finca Zero desktop theme, same as the main window (src/theme.js)
+  fzTheme: {
+    get: () => ipcRenderer.invoke('finca:fz-theme'),
+    onChange: cb => ipcRenderer.on('finca:fz-theme-changed', (_e, t) => cb(t))
+  },
   // STATE CHANNEL — project / cel / layer / tool / live-stroke ops. Tiny
   // JSON messages, ride a different IPC channel so they aren't starved by
   // the heavy bitmap encoder.

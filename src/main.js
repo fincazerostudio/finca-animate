@@ -878,7 +878,16 @@
       this.doStruct('New drawing', () => {
         this._holdPreviousTo(l, this.frame);
         l.newDrawingAt(this.frame, this.project.width, this.project.height);
+        this._fillPanel(l);
       });
+    }
+    // Storyboard mode: a panel shows one drawing per layer, so a new drawing
+    // made on a frame covers the whole panel.
+    _fillPanel(l) {
+      const span = OT.boardSpan ? OT.boardSpan(this.frame) : null;
+      if (!span) return;
+      const n = l.exposure[this.frame];
+      for (let f = span[0]; f <= span[1]; f++) l.exposure[f] = n;
     }
     duplicateDrawing() {
       const l = this._dl(); if (!l) return;
@@ -897,6 +906,7 @@
         c.dirty();
         l.cels[n] = c;
         l.exposure[this.frame] = n;
+        this._fillPanel(l);
       });
     }
     extendExposure() {
@@ -1128,6 +1138,17 @@
         l.cels[n] = c;
         l.exposure[this.frame] = n;
       });
+    }
+    // Timeline "Add 12 frames": one undo step. In storyboard mode the frames
+    // go to the current panel (it gets longer), so panels and frames agree.
+    addFrames(n) {
+      n = Math.max(1, n | 0);
+      if (OT.Board && OT.Board.on(this.project)) {
+        const cur = OT.Board.Ops.current(this);
+        OT.Board.Ops.setDuration(this, cur.panel.duration + n);
+        return;
+      }
+      this.doStruct('Add ' + n + ' frames', () => { this.project.frameCount += n; });
     }
     insertFrame() {
       if (OT.Board && OT.Board.on(this.project)) {

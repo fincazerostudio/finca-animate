@@ -1128,7 +1128,7 @@
         return b;
       };
       vb.appendChild(mk('−', () => a.stage.zoomAt(innerWidth / 2, innerHeight / 2, 0.8), 'Zoom out'));
-      this.zoomLabel = el('span', { style: { minWidth: '46px', textAlign: 'center', color: '#d6d9de' } }, ['100%']);
+      this.zoomLabel = el('span', { style: { minWidth: '46px', textAlign: 'center', color: 'var(--text)' } }, ['100%']);
       vb.appendChild(this.zoomLabel);
       vb.appendChild(mk('+', () => a.stage.zoomAt(innerWidth / 2, innerHeight / 2, 1.25), 'Zoom in'));
       vb.appendChild(mk('Fit', () => a.stage.fitToCamera(), 'Fit to camera (F)'));
@@ -2092,28 +2092,30 @@
       const S = 260, PAD = 34, R = S - PAD * 2;          // plot box, y range -0.25..1.25
       const X = x => PAD + x * R, Y = y => PAD + (1 - (y + 0.25) / 1.5) * R;
       const iX = px => (px - PAD) / R, iY = py => (1 - (py - PAD) / R) * 1.5 - 0.25;
-      const canvas = el('canvas', { width: S, height: S, style: { background: '#16181d', borderRadius: '6px', touchAction: 'none', cursor: 'default',
+      const canvas = el('canvas', { width: S, height: S, style: { background: 'var(--bg)', borderRadius: '6px', touchAction: 'none', cursor: 'default',
         width: S + 'px', height: S + 'px', alignSelf: 'center', flex: 'none' } });
       const g2 = canvas.getContext('2d');
       const info = el('div', { class: 'chk-row', style: { fontVariantNumeric: 'tabular-nums' } });
+      // interface colours follow the theme (src/theme.js)
+      const TC = c => (OT.Theme ? OT.Theme.c(c) : c);
       const draw = () => {
         g2.clearRect(0, 0, S, S);
-        g2.strokeStyle = '#2a2e36'; g2.lineWidth = 1;
+        g2.strokeStyle = TC('#2a2e36'); g2.lineWidth = 1;
         g2.strokeRect(X(0), Y(1), R, Y(0) - Y(1));
         for (let i = 1; i < span; i++) { g2.beginPath(); g2.moveTo(X(i / span), Y(-0.25)); g2.lineTo(X(i / span), Y(1.25)); g2.stroke(); }
         // handles
-        g2.strokeStyle = '#5ab8f0aa'; g2.beginPath();
+        g2.strokeStyle = TC('#5ab8f0aa'); g2.beginPath();
         g2.moveTo(X(0), Y(0)); g2.lineTo(X(cv[0]), Y(cv[1]));
         g2.moveTo(X(1), Y(1)); g2.lineTo(X(cv[2]), Y(cv[3])); g2.stroke();
         // curve
-        g2.strokeStyle = '#f0a93d'; g2.lineWidth = 2; g2.beginPath();
+        g2.strokeStyle = TC('#f0a93d'); g2.lineWidth = 2; g2.beginPath();
         for (let i = 0; i <= 80; i++) { const t = i / 80, y = U.cubicBezier(cv, t); i ? g2.lineTo(X(t), Y(y)) : g2.moveTo(X(t), Y(y)); }
         g2.stroke();
         // spacing dots: one per in-between frame
-        g2.fillStyle = '#e8e8e8';
+        g2.fillStyle = TC('#e8e8e8');
         for (let i = 1; i < span; i++) { const t = i / span; g2.beginPath(); g2.arc(X(t), Y(U.cubicBezier(cv, t)), 3, 0, 7); g2.fill(); }
         for (const [hx, hy] of [[cv[0], cv[1]], [cv[2], cv[3]]]) {
-          g2.fillStyle = '#5ab8f0'; g2.beginPath(); g2.arc(X(hx), Y(hy), 6, 0, 7); g2.fill();
+          g2.fillStyle = TC('#5ab8f0'); g2.beginPath(); g2.arc(X(hx), Y(hy), 6, 0, 7); g2.fill();
         }
         info.textContent = 'cubic-bezier(' + cv.map(v => v.toFixed(2)).join(', ') + ')  ·  ' + (span - 1) + ' in-between' + (span === 2 ? '' : 's');
       };

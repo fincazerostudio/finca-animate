@@ -124,9 +124,7 @@
       tb.appendChild(this._btn('Remove frame', ICON.clearx, () => app.removeFrame()));
 
       tb.appendChild(U.el('div', { class: 'tl-sep' }));
-      tb.appendChild(this._btn('Add 12 frames', ICON.addframe, () => {
-        app.project.frameCount += 12; app.emit('projectchange');
-      }));
+      tb.appendChild(this._btn('Add 12 frames', ICON.addframe, () => app.addFrames(12)));
       this.onionBtn = this._btn('Onion skin  (right-click for settings)', ICON.onion, () => {
         app.onion.on = !app.onion.on;
         this.onionBtn.classList.toggle('on', app.onion.on);

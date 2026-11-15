@@ -1974,6 +1974,6 @@
   }
 
   if (document.readyState === 'loading')
-    document.addEventListener('DOMContentLoaded', () => new PenWindow());
-  else new PenWindow();
+    document.addEventListener('DOMContentLoaded', () => { new PenWindow(); if (OT.Theme) OT.Theme.init(null); });
+  else { new PenWindow(); if (OT.Theme) OT.Theme.init(null); }   // same interface theme as the main window
 })();

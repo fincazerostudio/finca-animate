@@ -165,6 +165,11 @@
           map.set(l, src ? cloneCel(l, src) : 0);
         }
         insertFrames(app.project, cur.end + 1, cur.panel.duration, l => map.get(l) || 0);
+        // the copy keeps the panel's camera and layer moves, shifted to it
+        const d = cur.panel.duration, within = k => k.frame >= cur.start && k.frame <= cur.end;
+        const copies = ks => ks.filter(within).map(k => Object.assign(JSON.parse(JSON.stringify(k)), { frame: k.frame + d }));
+        app.project.camera.keyframes.push(...copies(app.project.camera.keyframes));
+        for (const l of app.project.layers) if (l.transform && l.transform.keyframes) l.transform.keyframes.push(...copies(l.transform.keyframes));
         const p = Object.assign(newPanel(cur.panel.scene, cur.panel.duration), {
           dialogue: cur.panel.dialogue, action: cur.panel.action, notes: cur.panel.notes, transition: cur.panel.transition
         });
@@ -258,10 +263,26 @@
       app.doStruct('Rename scene', () => { s.name = String(name); });
     },
 
+    // Captions and transition. Undoable: a stretch of typing in one field of
+    // one panel is one step (a pause of 1.5 s or another field starts a new one).
     setText(app, field, value) {
       const cur = Ops.current(app); if (!cur || FIELDS.concat(['transition']).indexOf(field) < 0) return;
-      if (cur.panel[field] === value) return;
+      const before = cur.panel[field];
+      if (before === value) return;
       cur.panel[field] = value;
+      const id = cur.panel.id, now = Date.now();
+      const find = () => app.project.board && app.project.board.panels.find(p => p.id === id);
+      const set = v => { const p = find(); if (p) { p[field] = v; app.dirty = true; app.emit('boardchange'); } };
+      const last = Ops._lastText;
+      if (last && last.id === id && last.field === field && now - last.at < 1500 && app.history.undoStack &&
+          app.history.undoStack[app.history.undoStack.length - 1] === last.cmd) {
+        last.cmd.after = value; last.at = now;
+      } else {
+        const cmd = { label: 'Edit ' + field, before, after: value,
+          undo() { set(this.before); }, redo() { set(this.after); } };
+        app.history.push(cmd);
+        Ops._lastText = { id, field, at: now, cmd };
+      }
       app.dirty = true;
       app.emit('boardchange');
     },
