@@ -42,8 +42,28 @@ per-user copy (see `BUILD.md`).
 - Shape tools (rectangle, ellipse, line) with fill
 - Eyedropper
 - Rectangular select with move / scale / rotate (free transform)
-- Per-stroke opacity, smoothing
+- Per-stroke opacity; Photoshop-style smoothing (the brush follows the pen's
+  path while you draw, and the line is rebuilt smooth when you lift)
 - Vector and bitmap layers (vector is the default)
+
+**Storyboard mode** (Storyboard Pro style; see `docs/storyboard-mode.md`)
+- File → New Storyboard, or the Storyboard template on the start screen
+- Panel strip with scene / panel numbers, durations and captions; reorder by dragging
+- Scene and panel properties: duration, transition, dialogue, action notes, notes
+- Panels on the timeline; play the animatic, export it as a movie, or export a
+  PDF storyboard (3, 6 or 1 panel per page)
+- The Animate | Storyboard switch keeps every panel when you go back to animating
+
+**Themes** (View → Theme; see `docs/themes.md`)
+- Follow FZ Theme: on a Finca Zero desktop, the app takes the desktop theme's
+  colours and artwork and changes with it, live
+- Harmony Graphite, Paper (light) and Classic
+
+**Drawing with a pen**
+- Tool properties bar across the top of the stage (size, opacity, smoothing, presets)
+- Pie menu of tools: tap the pen's side button on the canvas, or press Q
+- Drag layers and storyboard panels with the pen; drag empty space, or hold the
+  side button and drag, to scroll
 
 **Vector drawing (Harmony-style)**
 - Resolution-independent strokes, smoothed on release so lines are
@@ -176,7 +196,8 @@ per-user copy (see `BUILD.md`).
 This is an actively developed open-source clone. Core animation, timeline,
 painting, camera, and export pipelines are functional. See `ROADMAP.md` for
 what is planned next (vector deformers / bone rigging, node compositing,
-multiplane depth, particle effects, lip-sync).
+multiplane depth, particle effects, lip-sync) and `docs/storyboard-mode.md`
+for the storyboard plan (camera per panel, rendered transitions, script import).
 
 ## License
 

@@ -79,7 +79,9 @@ costs a week.
 
 - [ ] **Import:** SVG as editable strokes; PSD layers as bitmap layers.
       *(Toon Boom TVG is proprietary with no public spec; not planned.)*
-- [ ] **Multi-scene projects / storyboard view.**
+- [x] **Storyboard view.** Storyboard mode: panels, scenes, captions, animatic
+  and PDF export (`docs/storyboard-mode.md`, which lists what comes next).
+- [ ] **Multi-scene projects.**
 - [ ] **Scripting API.** The Scripting Console exists; document a stable
       API on top of it (scene, layers, drawings, keys, export).
 - [ ] **Node compositing view** over the effects above.
