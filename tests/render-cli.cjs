@@ -167,9 +167,11 @@ const u32be = (b, o) => b.readUInt32BE(o);
     st = probe(out('mov'));
     check('mov (ProRes 4444): exactly frames 3-7, alpha pixel format', r.code === 0 && vid(st).codec_name === 'prores' &&
       +vid(st).nb_read_frames === 5 && /^yuva/.test(vid(st).pix_fmt || ''), { out: r.out, st });
-    // 5 frames at 24 fps = 0.208333 s = exactly 10000 samples at 48 kHz
-    check('mov: sound cut to the exported frames, sample-accurate (10000 samples)',
-      aud(st).codec_name === 'pcm_s24le' && Math.round(+aud(st).duration * 48000) === 10000, aud(st));
+    // 5 frames at 24 fps = 0.208333 s: within one sample at the file's own rate
+    // (48 kHz here, 44.1 kHz on machines whose audio runs at that)
+    const sr = +aud(st).sample_rate || 48000;
+    check('mov: sound cut to the exported frames, sample-accurate',
+      aud(st).codec_name === 'pcm_s24le' && Math.abs(+aud(st).duration - 5 / 24) <= 1 / sr + 1e-9, aud(st));
 
     r = render(['--render', fscene, '-o', out('h265.mp4'), '--codec', 'h265', '--no-audio', '--scale', '0.5']);
     st = probe(out('h265.mp4'));
