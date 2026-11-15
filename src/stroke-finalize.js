@@ -61,12 +61,62 @@
     }
   }
 
+  // Live stabilising while the pen moves. At low settings it stays out of the
+  // way (no lag); towards 1 it holds the line steady even on fast strokes,
+  // like a stabiliser. (The old curve kept beta high, so at drawing speed
+  // even Smoothing 1 filtered almost nothing.)
   function oneEuroParams(smooth) {
-    const s = smooth || 0;
-    const U = OT.util;
-    const mincutoff = U ? U.lerp(2.0, 0.3, s) : (2.0 + (0.3 - 2.0) * s);
-    const beta      = U ? U.lerp(0.05, 0.005, s) : (0.05 + (0.005 - 0.05) * s);
+    const s = Math.max(0, Math.min(1, smooth || 0));
+    const mincutoff = 2.0 + (0.12 - 2.0) * s;
+    const beta = 0.05 * (1 - s) * (1 - s) + 0.0008 * s;
     return { mincutoff, beta, dcutoff: 1.0 };
+  }
+
+  // Smooth a finished stroke by distance along the line (Harmony's
+  // smoothness): resample evenly, then a Gaussian average whose width grows
+  // with the setting. Measured in drawing pixels, so it behaves the same at
+  // any pen report rate. The window shrinks near the ends, so the ends stay
+  // where the pen put them. 0 returns the stroke untouched.
+  function smoothStroke(pts, smooth) {
+    const s = Math.max(0, Math.min(1, smooth || 0));
+    if (s < 0.02 || !pts || pts.length < 4) return pts;
+    const sigma = 0.6 + 14 * s * s;                    // drawing px
+    const step = Math.max(0.75, sigma / 4);
+    // resample at an even step, carrying pressure and time
+    const res = [Object.assign({}, pts[0])];
+    let carry = 0;
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i];
+      const seg = Math.hypot(b.x - a.x, b.y - a.y);
+      if (!seg) continue;
+      let d = step - carry;
+      while (d <= seg) {
+        const k = d / seg;
+        res.push({ x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k,
+          p: (a.p == null ? 1 : a.p) + (((b.p == null ? 1 : b.p)) - (a.p == null ? 1 : a.p)) * k,
+          t: a.t != null && b.t != null ? a.t + (b.t - a.t) * k : b.t });
+        d += step;
+      }
+      carry = seg - (d - step);
+    }
+    const last = pts[pts.length - 1];
+    if (Math.hypot(res[res.length - 1].x - last.x, res[res.length - 1].y - last.y) > 0.01) res.push(Object.assign({}, last));
+    const n = res.length;
+    if (n < 4) return pts;
+    const r = Math.ceil((3 * sigma) / step);
+    const w = [];
+    for (let k = 0; k <= r; k++) w.push(Math.exp(-0.5 * Math.pow((k * step) / sigma, 2)));
+    const out = new Array(n);
+    for (let i = 0; i < n; i++) {
+      const lim = Math.min(r, i, n - 1 - i);           // symmetric: ends stay put
+      let sx = 0, sy = 0, sp = 0, sw = 0;
+      for (let k = -lim; k <= lim; k++) {
+        const q = res[i + k], wk = w[Math.abs(k)];
+        sx += q.x * wk; sy += q.y * wk; sp += (q.p == null ? 1 : q.p) * wk; sw += wk;
+      }
+      out[i] = { x: sx / sw, y: sy / sw, p: sp / sw, t: res[i].t };
+    }
+    return out;
   }
 
   // Initialize a 3-axis One Euro filter set on a "tool-like" target with
@@ -187,6 +237,7 @@
     const V = OT.Vector;
     let pts = rawPts;
     if (opts.inkDynamics) pts = applyInkDynamics(pts);
+    if (opts.smooth) pts = smoothStroke(pts, opts.smooth);
     if (V && V.simplify && opts.tol != null) {
       pts = V.simplify(pts, opts.tol);
       if (pts.length < 2 && rawPts.length >= 2) pts = rawPts.slice(0, 2);
@@ -201,7 +252,7 @@
   }
 
   OT.StrokeFinalize = {
-    applyInkDynamics, snapEndpoints, maybeAutoClose, finalize,
+    applyInkDynamics, snapEndpoints, maybeAutoClose, finalize, smoothStroke,
     OneEuroFilter, oneEuroParams, initOneEuro, applyOneEuro
   };
 })(window.OT = window.OT || {});

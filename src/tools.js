@@ -469,6 +469,7 @@
         tol,
         snapDist: app.settings.snapDist || 0,
         inkDynamics: !!app.settings.inkDynamics,
+        smooth: app.settings.smoothing || 0,
         autoClose: !!(app.settings && app.settings.autoClose),
         cel: this.t.cel
       });
@@ -729,6 +730,7 @@
           tol: 0.4 + this.smooth * 0.8,
           snapDist: app.settings.snapDist || 0,
           inkDynamics: !!app.settings.inkDynamics,
+        smooth: app.settings.smoothing || 0,
           autoClose: !!(app.settings && app.settings.autoClose),
           cel: cel
         });
@@ -1114,6 +1116,7 @@
         tol,
         snapDist: app.settings.snapDist || 0,
         inkDynamics: !!app.settings.inkDynamics,
+        smooth: app.settings.smoothing || 0,
         autoClose: !!(app.settings && app.settings.autoClose),
         cel: this.t.cel
       });
@@ -1210,6 +1213,7 @@
             tol: 0.4 + (this.smooth || 0) * 0.8,
             snapDist: app.settings.snapDist || 0,
             inkDynamics: !!app.settings.inkDynamics,
+        smooth: app.settings.smoothing || 0,
             autoClose: !!(app.settings && app.settings.autoClose),
             cel: cel
           });

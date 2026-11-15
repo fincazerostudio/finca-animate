@@ -1057,6 +1057,7 @@
         tol: typeof t.tol === 'number' ? t.tol : 0.4,
         snapDist: typeof t.snapDist === 'number' ? t.snapDist : 0,
         inkDynamics: !!t.inkDynamics,
+        smooth: typeof t.smoothing === 'number' ? t.smoothing : 0,
         autoClose: !!t.autoClose,
         cel: cel && cel.kind === 'vector' ? cel : null
       });
@@ -1086,6 +1087,7 @@
         tol: typeof t.tol === 'number' ? t.tol : 0.4,
         snapDist: typeof t.snapDist === 'number' ? t.snapDist : 0,
         inkDynamics: !!t.inkDynamics,
+        smooth: typeof t.smoothing === 'number' ? t.smoothing : 0,
         autoClose: !!t.autoClose,
         cel: cel && cel.kind === 'vector' ? cel : null
       });
