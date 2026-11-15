@@ -694,6 +694,7 @@
       const penPt = pt;   // the real pen tip; pt becomes the brush's spot
       this._liveTip = { x: pt.x, y: pt.y, p: pt.pressure };
       const lzR = SFz().lazyRadius(this.smooth, app.stage && app.stage.view ? app.stage.view.zoom : 1);
+      if (this._penPath) this._penPath.push({ x: pt.x, y: pt.y, p: pt.pressure, t: performance.now() });
       const lz = SFz().lazyStep(this, pt, lzR);
       if (!lz) { this._rafEmit(app); return; }
       pt = Object.assign({}, pt, { x: lz.x, y: lz.y });
@@ -750,8 +751,16 @@
         // is small enough in screen pixels (≈13 px at smooth 0.5) that the
         // catch-up isn't perceived as a jump.
         // catch up from the brush (on its string) to where the pen lifted
-        for (const q of SFz().catchUp(this, pt, 2)) this.raw.push({ x: q.x, y: q.y, p: pt.pressure, t: tNow });
-        this.raw.push({ x: pt.x, y: pt.y, p: pt.pressure, t: tNow });
+        // Photoshop-style catch-up: rebuild the stroke from the pen's own path
+        // with a centred smoothing (finalize, sigma) so it ends under the pen
+        // with no lag bias; without smoothing, the release point as before.
+        this._commitSigma = SFz().commitSigma(this.smooth, app.stage && app.stage.view ? app.stage.view.zoom : 1);
+        if (this._commitSigma && this._penPath && this._penPath.length > 1) {
+          this.raw = this._penPath.concat([{ x: pt.x, y: pt.y, p: pt.pressure, t: tNow }]);
+        } else {
+          this._commitSigma = 0;
+          this.raw.push({ x: pt.x, y: pt.y, p: pt.pressure, t: tNow });
+        }
       }
       // Procreate-style hold-to-snap: prefer the snap result that was live
       // at the moment of release. Pushing pt above invalidates the trailing
@@ -770,6 +779,7 @@
       } else {
         const fin = OT.StrokeFinalize.finalize(this.raw, {
           tol: 0.4 + this.smooth * 0.8,
+          sigma: this._commitSigma || 0,
           snapDist: app.settings.snapDist || 0,
           inkDynamics: !!app.settings.inkDynamics,
         smooth: app.settings.smoothing || 0,
@@ -1088,6 +1098,7 @@
       // Photoshop-style string (see PaintTool._vMove)
       this._liveTip = { x: pt.x, y: pt.y };
       const lzR = SFz().lazyRadius(this.smooth, app.stage && app.stage.view ? app.stage.view.zoom : 1);
+      if (this._penPath) this._penPath.push({ x: pt.x, y: pt.y, p: pt.pressure, t: performance.now() });
       const lz = SFz().lazyStep(this, pt, lzR);
       if (!lz) { this._schedule(app); return; }
       pt = Object.assign({}, pt, { x: lz.x, y: lz.y });
@@ -1246,8 +1257,14 @@
         // Push the actual release point (not this.sm) so the committed stroke
         // ends exactly where the user lifted, matching the live preview which
         // extends past the rope-lagged smoothed tip via _liveTip.
-        for (const q of SFz().catchUp(this, pt, 2)) this.raw.push({ x: q.x, y: q.y, t: tNow });
-        this.raw.push({ x: pt.x, y: pt.y, t: tNow });
+        // Photoshop-style catch-up (see PaintTool._vUp)
+        this._commitSigma = SFz().commitSigma(this.smooth, app.stage && app.stage.view ? app.stage.view.zoom : 1);
+        if (this._commitSigma && this._penPath && this._penPath.length > 1) {
+          this.raw = this._penPath.concat([{ x: pt.x, y: pt.y, p: pt.pressure, t: tNow }]);
+        } else {
+          this._commitSigma = 0;
+          this.raw.push({ x: pt.x, y: pt.y, t: tNow });
+        }
       }
       const cel = this.t.cel;
       if (this.vec) {
@@ -1261,6 +1278,7 @@
         } else {
           const fin = OT.StrokeFinalize.finalize(this.raw, {
             tol: 0.4 + (this.smooth || 0) * 0.8,
+            sigma: this._commitSigma || 0,
             snapDist: app.settings.snapDist || 0,
             inkDynamics: !!app.settings.inkDynamics,
         smooth: app.settings.smoothing || 0,

@@ -72,29 +72,50 @@
     return { mincutoff, beta, dcutoff: 1.0 };
   }
 
-  // Photoshop-style smoothing: the brush trails the pen on a string. Pen
-  // movement inside the string's length never reaches the line, so shakes
-  // vanish as you draw. The string is measured on screen (up to 40 px at 1),
-  // so it feels the same at any zoom. lazyStep returns the brush's new spot,
-  // or null while the pen is still inside the string; the stroke catches up
-  // to the pen on release (see catchUp).
-  function lazyRadius(smooth, zoom) {
-    const s = Math.max(0, Math.min(1, smooth || 0));
+  // Photoshop-style smoothing, in two parts.
+  // While drawing: the brush follows a running average of the pen's path
+  // (an exponential average by distance travelled), so wobble is damped but
+  // curves keep their shape (a pulled string, by contrast, cuts across
+  // curves and squashes ovals). The brush lags a little; a thin string
+  // shows the lag. On release: the stroke is rebuilt from the pen's own path
+  // with a centred smoothing (no lag bias) and ends under the pen, like
+  // Photoshop's catch-up. Both are measured on screen, so the feel is the
+  // same at any zoom.
+  const clamp01 = v => Math.max(0, Math.min(1, v || 0));
+  // how far back along the path the live average reaches (screen px -> drawing px)
+  function followWidth(smooth, zoom) {
+    const s = clamp01(smooth);
     if (s < 0.02) return 0;
-    return (40 * s * s) / Math.max(0.05, zoom || 1);
+    return (60 * s * s) / Math.max(0.05, zoom || 1);
   }
-  function lazyStart(target, pt) { target._lz = { x: pt.x, y: pt.y }; }
-  function lazyStep(target, pt, radius) {
-    if (!target._lz) { lazyStart(target, pt); return { x: pt.x, y: pt.y }; }
-    if (!radius) { target._lz.x = pt.x; target._lz.y = pt.y; return { x: pt.x, y: pt.y }; }
-    const dx = pt.x - target._lz.x, dy = pt.y - target._lz.y, d = Math.hypot(dx, dy);
-    if (d <= radius) return null;
-    const k = (d - radius) / d;
-    target._lz.x += dx * k; target._lz.y += dy * k;
+  // width of the final, centred smoothing (screen px -> drawing px)
+  function commitSigma(smooth, zoom) {
+    const s = clamp01(smooth);
+    if (s < 0.02) return 0;
+    return (1.5 + 18 * s) / Math.max(0.05, zoom || 1);   // ~10 screen px at 0.5, ~20 at 1
+  }
+  // kept for callers that only ask whether smoothing is on
+  const lazyRadius = followWidth;
+  function lazyStart(target, pt) {
+    target._lz = { x: pt.x, y: pt.y }; target._lzPen = { x: pt.x, y: pt.y };
+    // the pen's own path, for the centred rebuild on release
+    target._penPath = [{ x: pt.x, y: pt.y, p: pt.pressure != null ? pt.pressure : pt.p, t: performance.now() }];
+    target._commitSigma = 0;
+  }
+  // the brush's new spot for pen point pt (never null)
+  function lazyStep(target, pt, width) {
+    if (!target._lz) lazyStart(target, pt);
+    const prev = target._lzPen || pt;
+    const d = Math.hypot(pt.x - prev.x, pt.y - prev.y);
+    target._lzPen = { x: pt.x, y: pt.y };
+    if (!width) { target._lz.x = pt.x; target._lz.y = pt.y; return { x: pt.x, y: pt.y }; }
+    const k = d / (d + width);
+    target._lz.x += (pt.x - target._lz.x) * k;
+    target._lz.y += (pt.y - target._lz.y) * k;
     return { x: target._lz.x, y: target._lz.y };
   }
-  // Points from the brush's spot to where the pen was lifted, so the line
-  // ends under the pen ("catch-up on stroke end").
+  // straight points from the brush to the pen (used where a stroke cannot
+  // be rebuilt, e.g. a bitmap stroke already painted)
   function catchUp(target, pt, step) {
     const lz = target._lz; if (!lz) return [];
     const d = Math.hypot(pt.x - lz.x, pt.y - lz.y), n = Math.floor(d / Math.max(0.5, step || 2));
@@ -108,10 +129,13 @@
   // with the setting. Measured in drawing pixels, so it behaves the same at
   // any pen report rate. The window shrinks near the ends, so the ends stay
   // where the pen put them. 0 returns the stroke untouched.
-  function smoothStroke(pts, smooth) {
+  function smoothStroke(pts, smooth, sigmaPx) {
     const s = Math.max(0, Math.min(1, smooth || 0));
-    if (s < 0.02 || !pts || pts.length < 4) return pts;
-    const sigma = 0.6 + 6 * s * s;                     // drawing px (the string does the heavy lifting)
+    if ((s < 0.02 && !sigmaPx) || !pts || pts.length < 4) return pts;
+    // gentle low down (the string does the work), strong at the top so a
+    // shaky oval or curve comes out round: ~1.5 px at 0.4, ~3.3 at 0.6,
+    // ~8 at 0.8, ~20 px at 1
+    const sigma = sigmaPx || (0.6 + 19.4 * s * s * s);
     const step = Math.max(0.75, sigma / 4);
     // resample at an even step, carrying pressure and time
     const res = [Object.assign({}, pts[0])];
@@ -137,6 +161,23 @@
     const r = Math.ceil((3 * sigma) / step);
     const w = [];
     for (let k = 0; k <= r; k++) w.push(Math.exp(-0.5 * Math.pow((k * step) / sigma, 2)));
+    // a stroke that ends where it began (an oval, a circle) is smoothed as a
+    // loop, wrapping across the join, so it closes without a kink
+    const gap = Math.hypot(res[0].x - res[n - 1].x, res[0].y - res[n - 1].y);
+    if (gap < Math.max(6, 2 * sigma) && n * step > 12 * sigma) {
+      const m = n - 1;                                  // last sample repeats the first
+      const loop = new Array(n);
+      for (let i = 0; i < m; i++) {
+        let sx = 0, sy = 0, sp = 0, sw = 0;
+        for (let k = -Math.min(r, Math.floor(m / 2)); k <= Math.min(r, Math.floor(m / 2)); k++) {
+          const q = res[((i + k) % m + m) % m], wk = w[Math.abs(k)];
+          sx += q.x * wk; sy += q.y * wk; sp += (q.p == null ? 1 : q.p) * wk; sw += wk;
+        }
+        loop[i] = { x: sx / sw, y: sy / sw, p: sp / sw, t: res[i].t };
+      }
+      loop[m] = Object.assign({}, loop[0], { t: res[m].t });
+      return loop;
+    }
     const out = new Array(n);
     for (let i = 0; i < n; i++) {
       const lim = Math.min(r, i, n - 1 - i);           // symmetric: ends stay put
@@ -268,7 +309,7 @@
     const V = OT.Vector;
     let pts = rawPts;
     if (opts.inkDynamics) pts = applyInkDynamics(pts);
-    if (opts.smooth) pts = smoothStroke(pts, opts.smooth);
+    if (opts.smooth || opts.sigma) pts = smoothStroke(pts, opts.smooth, opts.sigma);
     if (V && V.simplify && opts.tol != null) {
       pts = V.simplify(pts, opts.tol);
       if (pts.length < 2 && rawPts.length >= 2) pts = rawPts.slice(0, 2);
@@ -284,7 +325,7 @@
 
   OT.StrokeFinalize = {
     applyInkDynamics, snapEndpoints, maybeAutoClose, finalize, smoothStroke,
-    lazyRadius, lazyStart, lazyStep, catchUp,
+    lazyRadius, lazyStart, lazyStep, catchUp, followWidth, commitSigma,
     OneEuroFilter, oneEuroParams, initOneEuro, applyOneEuro
   };
 })(window.OT = window.OT || {});
