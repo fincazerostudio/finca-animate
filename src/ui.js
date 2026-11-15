@@ -332,6 +332,15 @@
     }
 
     /* ============================ toolbar ============================ */
+    // The key that really picks a tool: the user's keymap, else the command's
+    // default (the old fixed letters in TOOL_LIST had drifted: Pencil said N,
+    // which is New Panel). Falls back to TOOL_LIST only for unmapped tools.
+    _toolKey(name, fallback) {
+      const id = { transform: 'tool-peg' }[name] || 'tool-' + name;
+      const cmd = (OT.KEY_COMMANDS || []).find(c => c.id === id);
+      const k = cmd ? ((this.app.keymap && this.app.keymap[id]) || cmd.def) : fallback;
+      return String(k || fallback).replace(/\b\w/g, ch => ch.toUpperCase());
+    }
     _buildToolbar() {
       const tb = document.getElementById('toolbar');
       tb.innerHTML = '';
@@ -340,7 +349,7 @@
         if (name === 'sep') { tb.appendChild(el('div', { class: 'tool-sep' })); return; }
         const b = el('button', {
           class: 'tool-btn',
-          title: TOOL_NAME[name] + '  (' + key + ')',
+          title: TOOL_NAME[name] + '  (' + this._toolKey(name, key) + ')',
           html: U.svg(TOOL_ICON[name])
         });
         b.addEventListener('click', () => this.app.tools.select(name));
