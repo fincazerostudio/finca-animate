@@ -1013,6 +1013,7 @@
       OT.StrokeFinalize.initOneEuro(wet, {
         x: projPt.x, y: projPt.y, pressure: projPt.p
       });
+      OT.StrokeFinalize.lazyStart(wet, projPt);   // Photoshop-style string, as in main
       const seedSmoothed = { x: projPt.x, y: projPt.y, p: projPt.p, t: performance.now() };
       wet.rawPts = [seedSmoothed];
       wet.pts = wet.rawPts;
@@ -1042,9 +1043,13 @@
       // and finalize on either side produces a different stroke shape.
       const smoothed = [];
       const now = performance.now();
+      const lzR = OT.StrokeFinalize.lazyRadius(ws.smooth, this.view && this.view.scale);
       for (const p of actualPts) {
+        // the brush trails the pen on its string (StrokeFinalize.lazyStep)
+        const lz = OT.StrokeFinalize.lazyStep(ws, p, lzR);
+        if (!lz) continue;
         const sm = OT.StrokeFinalize.applyOneEuro(ws, {
-          x: p.x, y: p.y, pressure: p.p
+          x: lz.x, y: lz.y, pressure: p.p
         });
         smoothed.push({ x: sm.x, y: sm.y, p: sm.p, t: now });
       }
@@ -1078,9 +1083,9 @@
       const ws = this.state.wetStroke;
       if (!ws) return;
       const t = this.state.tool;
-      ws.rawPts = ws.rawPts.concat([{
-        x: projPt.x, y: projPt.y, p: projPt.p, t: performance.now()
-      }]);
+      const now = performance.now();
+      ws.rawPts = ws.rawPts.concat(OT.StrokeFinalize.catchUp(ws, projPt, 2).map(q => ({ x: q.x, y: q.y, p: projPt.p, t: now })),
+        [{ x: projPt.x, y: projPt.y, p: projPt.p, t: now }]);
       const layer = this.state.layersById.get(this.state.activeLayerId);
       const cel = layer ? layer.celAt(this.state.frame) : null;
       const fin = OT.StrokeFinalize.finalize(ws.rawPts, {

@@ -50,6 +50,35 @@ const { launch, FILE } = require('./launch-browser.cjs');
   checks.push(['Smoothing 1 takes out most of the wobble', res.s1.jag < res.s0.jag * 0.35 && res.s1.dev < res.s0.dev]);
   checks.push(['smoothing grows with the slider', res.s5.jag < res.s0.jag && res.s1.jag < res.s5.jag]);
   checks.push(['the ends stay where the pen put them', Math.abs(res.s1.first.x - 400) < 6 && Math.abs(res.s1.last.x - 1360) < 6]);
+  // Photoshop-style string: shakes inside the string never reach the line, the
+  // brush trails the pen, and the line catches up to the pen on release
+  res.string = await page.evaluate(async () => {
+    const a = window.OT.app; a.tools.select('brush'); a.settings.smoothing = 1;
+    const cv = document.getElementById('canvas'), tool = a.tools.active;
+    const fire = (type, x, y) => { const c = window.T.client(x, y); cv.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true,
+      pointerId: 4, pointerType: 'pen', isPrimary: true, pressure: 0.6, button: type === 'pointermove' ? -1 : 0, buttons: type === 'pointerup' ? 0 : 1, clientX: c.x, clientY: c.y })); };
+    const zoom = a.stage.view.zoom, r = 40 / zoom;            // string length in drawing px
+    fire('pointerdown', 500, 850);
+    const n0 = tool.raw.length;
+    for (let i = 0; i < 30; i++) fire('pointermove', 500 + Math.sin(i) * r * 0.6, 850 + Math.cos(i * 1.3) * r * 0.6);   // shaking in place
+    const shakeAdded = tool.raw.length - n0;
+    for (let i = 1; i <= 40; i++) fire('pointermove', 500 + i * 15, 850);                                  // pull away
+    const trail = Math.hypot(tool._liveTip.x - tool._lz.x, tool._liveTip.y - tool._lz.y);
+    fire('pointerup', 1100, 850);
+    await new Promise(res => setTimeout(res, 120));
+    const cel = a.activeLayer().celAt(a.frame), P = cel.strokes[cel.strokes.length - 1].pts, last = P[P.length - 1];
+    // no string at 0
+    a.settings.smoothing = 0;
+    fire('pointerdown', 500, 950); fire('pointermove', 503, 950);
+    const noString = tool.raw.length >= 2;
+    fire('pointerup', 503, 950);
+    return { shakeAdded, trail, r, endGap: Math.hypot(last.x - 1100, last.y - 850), noString };
+  });
+  checks.push(['Smoothing 1: shaking inside the string adds nothing to the line', res.string.shakeAdded === 0]);
+  checks.push(['the brush trails the pen by the string while drawing', Math.abs(res.string.trail - res.string.r) < 1.5]);
+  checks.push(['on release the line catches up and ends under the pen', res.string.endGap < 3]);
+  checks.push(['Smoothing 0: no string, the line follows the pen at once', res.string.noString]);
+
   // finalize itself: 0 leaves points untouched
   res.zero = await page.evaluate(() => {
     const pts = [{ x: 0, y: 0 }, { x: 5, y: 3 }, { x: 10, y: -2 }, { x: 15, y: 4 }, { x: 20, y: 0 }];

@@ -115,6 +115,24 @@
   function applyOneEuro(tool, pt) {
     return OT.StrokeFinalize.applyOneEuro(tool, pt);
   }
+  const SFz = () => OT.StrokeFinalize;
+  // The smoothing string, as Photoshop shows it: a line from where the brush
+  // is to the pen tip, while the pen pulls ahead. Only with Smoothing on.
+  function drawSmoothingString(ctx, tool, app) {
+    if (!tool.t || !tool._lz || !tool._liveTip || tool.straight) return;
+    const zoom = app.stage && app.stage.view ? app.stage.view.zoom : 1;
+    if (!SFz().lazyRadius(tool.smooth, zoom)) return;
+    const a = tool._lz, b = tool._liveTip;
+    if (Math.hypot(b.x - a.x, b.y - a.y) < 0.5) return;
+    ctx.save();
+    applyLayerXform(ctx, tool.t.layer, app.frame, app);
+    ctx.lineWidth = 1.5 / zoom;
+    ctx.strokeStyle = 'rgba(255, 92, 138, 0.9)';
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    ctx.fillStyle = 'rgba(255, 92, 138, 0.95)';
+    ctx.beginPath(); ctx.arc(a.x, a.y, 3 / zoom, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
 
   // (Ink-pen velocity dynamics now lives in OT.StrokeFinalize.applyInkDynamics
   // — see src/stroke-finalize.js. Pen window and main both call it via
@@ -339,6 +357,7 @@
       this.buf.width = cel.w; this.buf.height = cel.h;
       this.bctx = this.buf.getContext('2d');
       this.sm = { x: pt.x, y: pt.y };
+      OT.StrokeFinalize.lazyStart(this, pt);   // the string starts at the pen
       this.last = { x: pt.x, y: pt.y, p: pt.pressure };
       this._initOneEuro(pt);
       this._predictedPts = null;
@@ -371,6 +390,11 @@
       // tracks fast moves with minimal lag (vs. the old fixed-radius rope,
       // which lagged the cursor the same amount no matter how fast). Slider
       // controls mincutoff / beta -- see oneEuroParams.
+      // Photoshop-style string first (see _vMove).
+      this._liveTip = { x: pt.x, y: pt.y, p: pt.pressure };
+      const lz = SFz().lazyStep(this, pt, SFz().lazyRadius(this.smooth, app.stage && app.stage.view ? app.stage.view.zoom : 1));
+      if (!lz) { app.emit('overlayrender'); return; }
+      pt = Object.assign({}, pt, { x: lz.x, y: lz.y });
       const sm = this._applyOneEuro(pt);
       this.sm.x = sm.x; this.sm.y = sm.y;
       this._seg(this.last.x, this.last.y, this.last.p, this.sm.x, this.sm.y, sm.p);
@@ -393,6 +417,11 @@
         // the stroke does not visibly snap forward at release (matches vector
         // and pencil tools).
         this._seg(this.last.x, this.last.y, this.last.p, this.sm.x, this.sm.y, pt.pressure);
+        // with the smoothing string on, catch up to where the pen lifted
+        // (Photoshop's catch-up on stroke end; the vector tools do the same)
+        if (SFz().lazyRadius(this.smooth, app.stage && app.stage.view ? app.stage.view.zoom : 1) > 0) {
+          this._seg(this.sm.x, this.sm.y, pt.pressure, pt.x, pt.y, pt.pressure);
+        }
       }
       this._rComposite();
       app.history.pushCelEdit(this.mode, this.t.cel, this.before);
@@ -455,7 +484,8 @@
       // experienced. Concatenating _liveTip both makes the wet preview
       // reach the cursor AND eliminates the geometric diff on commit.
       let raw = this.raw;
-      if (this._liveTip && !this.straight) {
+      const stringOn = SFz().lazyRadius(this.smooth, app.stage && app.stage.view ? app.stage.view.zoom : 1) > 0;
+      if (this._liveTip && !this.straight && !stringOn) {
         const tail = raw[raw.length - 1];
         if (tail.x !== this._liveTip.x || tail.y !== this._liveTip.y) {
           raw = raw.concat([{
@@ -481,6 +511,7 @@
     // into cel.canvas and using the cache fallback — pixelated the entire
     // cel whenever the user zoomed in).
     drawOverlay(ctx, app) {
+      drawSmoothingString(ctx, this, app);
       if (!this.t || !this.vec || this.mode === 'eraser') return;
       if (!this.raw || this.raw.length < 1) return;
       ctx.save();
@@ -613,6 +644,7 @@
       this._previewPts = null;
       this._previewClosed = false;
       this.sm = { x: pt.x, y: pt.y };
+      OT.StrokeFinalize.lazyStart(this, pt);   // the string starts at the pen
       this.lastStamp = { x: pt.x, y: pt.y, p: pt.pressure };
       this._initOneEuro(pt);
       this._predictedPts = null;
@@ -657,6 +689,14 @@
         this._rafEmit(app);
         return;
       }
+      // Photoshop-style string: the brush follows only once the pen pulls
+      // past the string's length (StrokeFinalize.lazyStep).
+      const penPt = pt;   // the real pen tip; pt becomes the brush's spot
+      this._liveTip = { x: pt.x, y: pt.y, p: pt.pressure };
+      const lzR = SFz().lazyRadius(this.smooth, app.stage && app.stage.view ? app.stage.view.zoom : 1);
+      const lz = SFz().lazyStep(this, pt, lzR);
+      if (!lz) { this._rafEmit(app); return; }
+      pt = Object.assign({}, pt, { x: lz.x, y: lz.y });
       // One Euro filter smoothing (see _rMove). Adaptive cutoff: low at rest
       // for jitter rejection, high during fast moves for low lag.
       const sm = this._applyOneEuro(pt);
@@ -669,7 +709,7 @@
       // detection again. (drawOverlay no longer needs _liveTip now that
       // finalize runs per rAF and the preview reaches the cursor on its
       // own.)
-      this._liveTip = { x: pt.x, y: pt.y, p: pt.pressure };
+      this._liveTip = { x: penPt.x, y: penPt.y, p: penPt.pressure };
       // No cel.canvas stamping — drawOverlay renders the live stroke as a
       // proper vector path on the overlay each frame, which stays crisp at
       // any zoom. RAF-coalesce the overlay refresh + the Procreate-style
@@ -709,6 +749,8 @@
         // pt makes the final point exactly meet the cursor; the lag radius
         // is small enough in screen pixels (≈13 px at smooth 0.5) that the
         // catch-up isn't perceived as a jump.
+        // catch up from the brush (on its string) to where the pen lifted
+        for (const q of SFz().catchUp(this, pt, 2)) this.raw.push({ x: q.x, y: q.y, p: pt.pressure, t: tNow });
         this.raw.push({ x: pt.x, y: pt.y, p: pt.pressure, t: tNow });
       }
       // Procreate-style hold-to-snap: prefer the snap result that was live
@@ -993,6 +1035,7 @@
       this.smooth = app.settings.smoothing;
       this.before = t.cel.snapshot();
       this.sm = { x: pt.x, y: pt.y };
+      OT.StrokeFinalize.lazyStart(this, pt);   // the string starts at the pen
       // Timestamps on every point enable the Procreate-style hold-to-snap
       // gesture in shape recognition (see _maybeSnapShape).
       this.raw = [{ x: pt.x, y: pt.y, t: performance.now() }];
@@ -1042,12 +1085,16 @@
         this._schedule(app);
         return;
       }
+      // Photoshop-style string (see PaintTool._vMove)
+      this._liveTip = { x: pt.x, y: pt.y };
+      const lzR = SFz().lazyRadius(this.smooth, app.stage && app.stage.view ? app.stage.view.zoom : 1);
+      const lz = SFz().lazyStep(this, pt, lzR);
+      if (!lz) { this._schedule(app); return; }
+      pt = Object.assign({}, pt, { x: lz.x, y: lz.y });
       // One Euro filter smoothing -- adaptive cutoff (see OneEuroFilter).
       const sm = applyOneEuro(this, pt);
       this.sm.x = sm.x; this.sm.y = sm.y;
       this.raw.push({ x: this.sm.x, y: this.sm.y, t: performance.now() });
-      // Live cursor tip (raw, not smoothed) so the preview reaches the pen.
-      this._liveTip = { x: pt.x, y: pt.y };
       this._schedule(app);
     }
     // Predicted samples drawn ahead of the cursor on the overlay only.
@@ -1102,7 +1149,8 @@
       // an extra point at the cursor -- producing a visible shift on
       // release. Same fix as PaintTool._computePreview.
       let raw = this.raw;
-      if (this._liveTip && !this.straight) {
+      const stringOn = SFz().lazyRadius(this.smooth, app.stage && app.stage.view ? app.stage.view.zoom : 1) > 0;
+      if (this._liveTip && !this.straight && !stringOn) {
         const tail = raw[raw.length - 1];
         if (tail.x !== this._liveTip.x || tail.y !== this._liveTip.y) {
           raw = raw.concat([{
@@ -1125,6 +1173,7 @@
     }
     // Live preview of the in-progress pencil stroke, on the overlay.
     drawOverlay(ctx, app) {
+      drawSmoothingString(ctx, this, app);
       if (!this.t || !this.vec || !this.raw || this.raw.length < 1) return;
       ctx.save();
       applyLayerXform(ctx, this.t.layer, app.frame, app);
@@ -1197,6 +1246,7 @@
         // Push the actual release point (not this.sm) so the committed stroke
         // ends exactly where the user lifted, matching the live preview which
         // extends past the rope-lagged smoothed tip via _liveTip.
+        for (const q of SFz().catchUp(this, pt, 2)) this.raw.push({ x: q.x, y: q.y, t: tNow });
         this.raw.push({ x: pt.x, y: pt.y, t: tNow });
       }
       const cel = this.t.cel;

@@ -72,6 +72,37 @@
     return { mincutoff, beta, dcutoff: 1.0 };
   }
 
+  // Photoshop-style smoothing: the brush trails the pen on a string. Pen
+  // movement inside the string's length never reaches the line, so shakes
+  // vanish as you draw. The string is measured on screen (up to 40 px at 1),
+  // so it feels the same at any zoom. lazyStep returns the brush's new spot,
+  // or null while the pen is still inside the string; the stroke catches up
+  // to the pen on release (see catchUp).
+  function lazyRadius(smooth, zoom) {
+    const s = Math.max(0, Math.min(1, smooth || 0));
+    if (s < 0.02) return 0;
+    return (40 * s * s) / Math.max(0.05, zoom || 1);
+  }
+  function lazyStart(target, pt) { target._lz = { x: pt.x, y: pt.y }; }
+  function lazyStep(target, pt, radius) {
+    if (!target._lz) { lazyStart(target, pt); return { x: pt.x, y: pt.y }; }
+    if (!radius) { target._lz.x = pt.x; target._lz.y = pt.y; return { x: pt.x, y: pt.y }; }
+    const dx = pt.x - target._lz.x, dy = pt.y - target._lz.y, d = Math.hypot(dx, dy);
+    if (d <= radius) return null;
+    const k = (d - radius) / d;
+    target._lz.x += dx * k; target._lz.y += dy * k;
+    return { x: target._lz.x, y: target._lz.y };
+  }
+  // Points from the brush's spot to where the pen was lifted, so the line
+  // ends under the pen ("catch-up on stroke end").
+  function catchUp(target, pt, step) {
+    const lz = target._lz; if (!lz) return [];
+    const d = Math.hypot(pt.x - lz.x, pt.y - lz.y), n = Math.floor(d / Math.max(0.5, step || 2));
+    const out = [];
+    for (let i = 1; i < n; i++) out.push({ x: lz.x + (pt.x - lz.x) * i / n, y: lz.y + (pt.y - lz.y) * i / n });
+    return out;
+  }
+
   // Smooth a finished stroke by distance along the line (Harmony's
   // smoothness): resample evenly, then a Gaussian average whose width grows
   // with the setting. Measured in drawing pixels, so it behaves the same at
@@ -80,7 +111,7 @@
   function smoothStroke(pts, smooth) {
     const s = Math.max(0, Math.min(1, smooth || 0));
     if (s < 0.02 || !pts || pts.length < 4) return pts;
-    const sigma = 0.6 + 14 * s * s;                    // drawing px
+    const sigma = 0.6 + 6 * s * s;                     // drawing px (the string does the heavy lifting)
     const step = Math.max(0.75, sigma / 4);
     // resample at an even step, carrying pressure and time
     const res = [Object.assign({}, pts[0])];
@@ -253,6 +284,7 @@
 
   OT.StrokeFinalize = {
     applyInkDynamics, snapEndpoints, maybeAutoClose, finalize, smoothStroke,
+    lazyRadius, lazyStart, lazyStep, catchUp,
     OneEuroFilter, oneEuroParams, initOneEuro, applyOneEuro
   };
 })(window.OT = window.OT || {});
