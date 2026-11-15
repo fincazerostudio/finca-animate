@@ -1795,3 +1795,7 @@ body.board-mode #boardpanel{display:flex;flex:none;max-height:36vh;}
 body.board-mode #sidebar{overflow-y:auto;}
 body.board-mode #sidebar > .panel{flex:none;}
 body.board-mode #layerpanel{min-height:160px;}
+/* Pen / touch drag-and-drop (src/pen-dnd.js): a pen press on a draggable row
+   must start a drag, not scroll the list under it. */
+[draggable="true"]{touch-action:none;}
+body.pen-dragging, body.pen-dragging *{cursor:grabbing !important;}
