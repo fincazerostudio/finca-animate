@@ -139,9 +139,9 @@
     { id: 'art-toggle', label: 'Toggle Line Art / Colour Art', cat: 'Tools', def: 'alt+c', noRepeat: 1, run: a => a.toggleArtMode() },
     { id: 'clean-view', label: 'Clean canvas (hide panels)', cat: 'View', def: 'tab', prevent: 1, noRepeat: 1, run: a => a.toggleCleanView() },
     // Storyboard mode (src/board.js); outside a storyboard they do nothing.
-    { id: 'board-new-panel', label: 'New panel', cat: 'Storyboard', def: 'n', noRepeat: 1, run: a => { if (a.project.board) OT.Board.Ops.newPanel(a); } },
-    { id: 'board-prev-panel', label: 'Previous panel', cat: 'Storyboard', def: 'pageup', prevent: 1, run: a => { if (a.project.board) OT.Board.Ops.go(a, -1); } },
-    { id: 'board-next-panel', label: 'Next panel', cat: 'Storyboard', def: 'pagedown', prevent: 1, run: a => { if (a.project.board) OT.Board.Ops.go(a, 1); } },
+    { id: 'board-new-panel', label: 'New panel', cat: 'Storyboard', def: 'n', noRepeat: 1, run: a => { if (OT.Board.on(a.project)) OT.Board.Ops.newPanel(a); } },
+    { id: 'board-prev-panel', label: 'Previous panel', cat: 'Storyboard', def: 'pageup', prevent: 1, run: a => { if (OT.Board.on(a.project)) OT.Board.Ops.go(a, -1); } },
+    { id: 'board-next-panel', label: 'Next panel', cat: 'Storyboard', def: 'pagedown', prevent: 1, run: a => { if (OT.Board.on(a.project)) OT.Board.Ops.go(a, 1); } },
   ];
   OT.KEY_COMMANDS = KEY_COMMANDS;
 
@@ -1109,7 +1109,7 @@
       });
     }
     insertFrame() {
-      if (this.project.board && OT.Board) {
+      if (OT.Board && OT.Board.on(this.project)) {
         const cur = OT.Board.Ops.current(this);
         OT.Board.Ops.setDuration(this, cur.panel.duration + 1);
         return;
@@ -1128,7 +1128,7 @@
     }
     removeFrame() {
       if (this.project.frameCount <= 1) { this.ui.status('Cannot remove the last frame'); return; }
-      if (this.project.board && OT.Board) {
+      if (OT.Board && OT.Board.on(this.project)) {
         const cur = OT.Board.Ops.current(this);
         if (cur.panel.duration <= 1) { OT.Board.Ops.deletePanel(this); return; }
         OT.Board.Ops.setDuration(this, cur.panel.duration - 1);

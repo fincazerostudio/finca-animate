@@ -68,6 +68,11 @@
     return b;
   }
 
+  // Storyboard mode is on when the project has a board that is not switched
+  // off. Switching to Animation keeps every panel and caption; switching back
+  // brings them back (frames added in Animation go to the last panel).
+  function on(project) { return !!(project && project.board && !project.board.hidden); }
+
   function spans(board) {
     const out = [];
     let f = 0;
@@ -275,6 +280,40 @@
     }
   };
 
+  // Animate <-> Storyboard. One undo step; nothing is thrown away.
+  function setMode(app, storyboard) {
+    const p = app.project;
+    if (storyboard && !p.board) { app.doStruct('Storyboard mode', () => create(p)); }
+    else if (p.board && !!p.board.hidden === !storyboard) return;
+    else app.doStruct(storyboard ? 'Storyboard mode' : 'Animation mode', () => {
+      if (storyboard) { delete p.board.hidden; normalize(p); } else p.board.hidden = true;
+    });
+    app.ui.status(storyboard ? 'Storyboard mode' : 'Animation mode: panels are kept; switch back any time');
+    app.emit('boardchange');
+  }
+
+  // The Animate | Storyboard switch at the right of the menu bar, shown for
+  // any project that has a storyboard (re-attached when the menu rebuilds).
+  function attachSwitch(app) {
+    const bar = document.getElementById('menubar');
+    if (!bar || !app.project) return;
+    let sw = bar.querySelector('.fz-mode-switch');
+    if (!app.project.board) { if (sw) sw.remove(); return; }
+    if (!sw) {
+      sw = el('div', { class: 'fz-mode-switch', role: 'group', 'aria-label': 'Mode' });
+      const mk = (label, mode, tip) => {
+        const b = el('button', { type: 'button', class: 'fz-mode-btn', 'data-mode': mode, title: tip }, [label]);
+        b.addEventListener('click', e => { e.stopPropagation(); setMode(app, mode === 'board'); });
+        return b;
+      };
+      sw.appendChild(mk('Animate', 'anim', 'Animation mode: frames and drawings, no panel strip'));
+      sw.appendChild(mk('Storyboard', 'board', 'Storyboard mode: panels, captions, animatic'));
+      bar.appendChild(sw);
+    }
+    const isOn = on(app.project);
+    for (const b of sw.querySelectorAll('.fz-mode-btn')) b.classList.toggle('is-on', (b.dataset.mode === 'board') === isOn);
+  }
+
   function normalizeScenes(b, extra) {
     const known = b.scenes.concat(extra ? [extra] : []);
     const order = [];
@@ -286,8 +325,8 @@
   // whole panel under that frame.
   OT.boardSpan = function (frame) {
     const app = OT.app;
-    const b = app && app.project && app.project.board;
-    if (!b) return null;
+    if (!app || !on(app.project)) return null;
+    const b = app.project.board;
     const s = spanAt(b, frame);
     return [s.start, s.end];
   };
@@ -350,7 +389,7 @@
     }
     markCurrent() {
       const b = this.app.project.board;
-      if (!b || !this.root) return;
+      if (!on(this.app.project) || !this.root) return;
       const cur = spanAt(b, this.app.frame);
       for (const c of this.root.querySelectorAll('.bs-card')) {
         const on = c.dataset.id === cur.panel.id;
@@ -360,9 +399,10 @@
     }
     render() {
       const app = this.app, b = app.project.board;
-      document.body.classList.toggle('board-mode', !!b);
+      document.body.classList.toggle('board-mode', on(app.project));
+      attachSwitch(app);
       if (!this.root) return;
-      if (!b) { this.root.innerHTML = ''; return; }
+      if (!on(app.project)) { this.root.innerHTML = ''; return; }
       const lab = labels(b), fps = app.project.fps || 24;
       const cur = spanAt(b, app.frame);
       const tools = el('div', { class: 'bs-tools' }, [
@@ -453,7 +493,7 @@
       const app = this.app, b = app.project.board;
       if (!this.root) return;
       this.root.innerHTML = '';
-      if (!b) return;
+      if (!on(app.project)) return;
       const c = Ops.current(app);
       this._shownId = c.panel.id;
       const L = labels(b).get(c.panel.id);
@@ -502,5 +542,5 @@
     app.board.props.render();
   }
 
-  OT.Board = { create, normalize, spans, spanAt, labels, insertFrames, removeFrames, Ops, install, defaultDuration };
+  OT.Board = { create, normalize, spans, spanAt, labels, insertFrames, removeFrames, Ops, install, defaultDuration, on, setMode, attachSwitch };
 })(window.OT = window.OT || {});

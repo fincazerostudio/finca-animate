@@ -72,12 +72,17 @@
     /* ============================ menu bar ============================ */
     // Storyboard Pro style commands; see src/board.js.
     _boardMenu() {
-      const a = this.app, B = OT.Board, on = !!a.project.board;
+      const a = this.app, B = OT.Board;
       if (!B) return [];
-      if (!on) return [
-        { label: 'Turn This Project into a Storyboard', fn: () => a.doStruct('Make storyboard', () => B.create(a.project)) }
+      if (!a.project.board) return [
+        { label: 'Turn This Project into a Storyboard', fn: () => B.setMode(a, true) }
+      ];
+      if (!B.on(a.project)) return [
+        { label: 'Back to Storyboard Mode', fn: () => B.setMode(a, true) }
       ];
       return [
+        { label: 'Switch to Animation Mode', fn: () => B.setMode(a, false) },
+        { sep: 1 },
         { label: 'New Panel', sc: 'N', fn: () => B.Ops.newPanel(a) },
         { label: 'Duplicate Panel', fn: () => B.Ops.duplicatePanel(a) },
         { label: 'Delete Panel', fn: () => B.Ops.deletePanel(a) },
@@ -295,6 +300,7 @@
         });
         bar.appendChild(item);
       });
+      if (OT.Board && OT.Board.attachSwitch) OT.Board.attachSwitch(this.app);   // Animate | Storyboard
       // hooked once -- _buildMenu re-runs whenever the recent-files list changes
       if (!this._menuClickHooked) {
         this._menuClickHooked = true;

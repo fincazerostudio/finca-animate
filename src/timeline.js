@@ -1562,7 +1562,7 @@
       // Storyboard mode: panels as a band along the top of the ruler (current
       // panel brighter, scene starts in coral) and a strong line through
       // every row where a panel starts, as on Storyboard Pro's timeline.
-      if (p.board && OT.Board) {
+      if (OT.Board && OT.Board.on(p)) {
         const cur = OT.Board.spanAt(p.board, cf);
         let prevScene = null;
         for (const s of OT.Board.spans(p.board)) {

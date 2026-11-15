@@ -139,6 +139,39 @@ const path = require('path');
   } catch (e) { res.pdf.pages = e.code === 'ENOENT' ? 'skip' : 'error: ' + e.message; }
   checks.push(['PDF export is a valid PDF (3 panels -> 1 page)', res.pdf.header === '%PDF-' && (res.pdf.pages === 1 || res.pdf.pages === 'skip')]);
 
+  // Animate <-> Storyboard switch: panels kept, animation behaves normally
+  res.mode = await page.evaluate(async () => {
+    const a = window.OT.app, B = window.OT.Board;
+    const panelsBefore = JSON.stringify(a.project.board.panels.map(p => [p.id, p.duration]));
+    const btn = m => document.querySelector('#menubar .fz-mode-btn[data-mode="' + m + '"]');
+    const hasSwitch = !!btn('anim') && btn('board').classList.contains('is-on');
+    btn('anim').click();
+    await new Promise(r => setTimeout(r, 60));
+    const anim = { on: B.on(a.project), body: document.body.classList.contains('board-mode'),
+      cards: document.querySelectorAll('#boardstrip .bs-card').length, kept: !!a.project.board,
+      animOn: btn('anim').classList.contains('is-on'), span: window.OT.boardSpan(0) };
+    const frames = a.project.frameCount, d0 = a.project.board.panels[0].duration;
+    a.setFrame(0); a.insertFrame();                   // a plain frame insert, not a panel resize
+    const ins = { frames: a.project.frameCount === frames + 1, panelSame: a.project.board.panels[0].duration === d0 };
+    const data = JSON.parse(JSON.stringify(window.OT.IO.serialize(a)));
+    const hiddenSaved = !!(data.board && data.board.hidden);
+    btn('board').click();
+    await new Promise(r => setTimeout(r, 60));
+    const back = { on: B.on(a.project), body: document.body.classList.contains('board-mode'),
+      cards: document.querySelectorAll('#boardstrip .bs-card').length,
+      inStep: a.project.frameCount === a.project.board.panels.reduce((n, p) => n + p.duration, 0) };
+    a.undo();
+    const undone = !B.on(a.project) && !!a.project.board;
+    a.redo();
+    return { hasSwitch, anim, ins, hiddenSaved, back, undone, panelsSame: JSON.stringify(a.project.board.panels.map(p => p.id)) === JSON.stringify(JSON.parse(panelsBefore).map(x => x[0])) };
+  });
+  checks.push(['Animate | Storyboard switch shows for storyboard projects', res.mode.hasSwitch]);
+  checks.push(['Animation mode hides the strip, keeps the panels, draws per frame',
+    !res.mode.anim.on && !res.mode.anim.body && res.mode.anim.cards === 0 && res.mode.anim.kept && res.mode.anim.animOn && res.mode.anim.span === null]);
+  checks.push(['Insert Frame in Animation mode is a plain frame insert', res.mode.ins.frames && res.mode.ins.panelSame]);
+  checks.push(['back to Storyboard: strip returns, panels and frames in step', res.mode.back.on && res.mode.back.body && res.mode.back.cards === 3 && res.mode.back.inStep && res.mode.panelsSame]);
+  checks.push(['mode switch is undoable and saved with the project', res.mode.undone && res.mode.hiddenSaved]);
+
   // a plain project is not in board mode
   res.plain = await page.evaluate(() => { window.OT.app.newProject({}); return document.body.classList.contains('board-mode'); });
   await page.waitForTimeout(100);

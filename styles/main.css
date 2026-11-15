@@ -1799,3 +1799,9 @@ body.board-mode #layerpanel{min-height:160px;}
    must start a drag, not scroll the list under it. */
 [draggable="true"]{touch-action:none;}
 body.pen-dragging, body.pen-dragging *{cursor:grabbing !important;}
+/* Animate | Storyboard switch, right end of the menu bar (src/board.js) */
+.fz-mode-switch{margin-left:auto;margin-right:10px;display:flex;align-self:center;border:1px solid var(--line);border-radius:6px;overflow:hidden;}
+.fz-mode-btn{background:var(--bg);color:var(--text-dim);border:0;padding:4px 14px;font:inherit;font-size:12px;cursor:pointer;}
+.fz-mode-btn + .fz-mode-btn{border-left:1px solid var(--line);}
+.fz-mode-btn:hover{color:var(--text);}
+.fz-mode-btn.is-on{background:var(--accent-lo);color:#fff;}
