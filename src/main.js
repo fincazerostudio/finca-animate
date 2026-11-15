@@ -137,7 +137,11 @@
     { id: 'light-table', label: 'Light table', cat: 'View', def: 'alt+l', noRepeat: 1, run: a => a.toggleLightTable() },
     { id: 'shift-trace', label: 'Shift & Trace', cat: 'View', def: 'alt+s', noRepeat: 1, run: a => a.toggleShiftTrace() },
     { id: 'art-toggle', label: 'Toggle Line Art / Colour Art', cat: 'Tools', def: 'alt+c', noRepeat: 1, run: a => a.toggleArtMode() },
-    { id: 'clean-view', label: 'Clean canvas (hide panels)', cat: 'View', def: 'tab', prevent: 1, noRepeat: 1, run: a => a.toggleCleanView() }
+    { id: 'clean-view', label: 'Clean canvas (hide panels)', cat: 'View', def: 'tab', prevent: 1, noRepeat: 1, run: a => a.toggleCleanView() },
+    // Storyboard mode (src/board.js); outside a storyboard they do nothing.
+    { id: 'board-new-panel', label: 'New panel', cat: 'Storyboard', def: 'n', noRepeat: 1, run: a => { if (a.project.board) OT.Board.Ops.newPanel(a); } },
+    { id: 'board-prev-panel', label: 'Previous panel', cat: 'Storyboard', def: 'pageup', prevent: 1, run: a => { if (a.project.board) OT.Board.Ops.go(a, -1); } },
+    { id: 'board-next-panel', label: 'Next panel', cat: 'Storyboard', def: 'pagedown', prevent: 1, run: a => { if (a.project.board) OT.Board.Ops.go(a, 1); } },
   ];
   OT.KEY_COMMANDS = KEY_COMMANDS;
 
@@ -263,6 +267,7 @@
       this.timeline = new OT.Timeline(this);
       this.penCast = new OT.PenCast(this);   // secondary pen-display window
       this.celMemory = OT.CelMemory.attach(this);   // cel surface budget
+      if (OT.Board) OT.Board.install(this);          // storyboard mode (project.board)
       // a drawing (or its thumbnail) finished loading in the background: redraw
       OT.Cel.onLoad = () => {
         if (this._celLoadRaf) return;
@@ -743,6 +748,7 @@
       const p = this.project;
       return {
         frameCount: p.frameCount,
+        board: p.board ? JSON.parse(JSON.stringify(p.board)) : null,
         camera: JSON.parse(JSON.stringify(p.camera)),
         layers: p.layers.slice(),
         activeId: this.activeLayer() ? this.activeLayer().id : null,
@@ -760,6 +766,7 @@
     _restoreStruct(s) {
       const p = this.project;
       p.frameCount = s.frameCount;
+      if (s.board) p.board = JSON.parse(JSON.stringify(s.board)); else delete p.board;
       p.camera = JSON.parse(JSON.stringify(s.camera));
       p.layers = s.layers.slice();
       for (const pl of s.perLayer) {
@@ -1102,6 +1109,11 @@
       });
     }
     insertFrame() {
+      if (this.project.board && OT.Board) {
+        const cur = OT.Board.Ops.current(this);
+        OT.Board.Ops.setDuration(this, cur.panel.duration + 1);
+        return;
+      }
       this.doStruct('Insert frame', () => {
         for (const l of this.project.layers) l.exposure.splice(this.frame, 0, 0);
         this.project.frameCount++;
@@ -1116,6 +1128,12 @@
     }
     removeFrame() {
       if (this.project.frameCount <= 1) { this.ui.status('Cannot remove the last frame'); return; }
+      if (this.project.board && OT.Board) {
+        const cur = OT.Board.Ops.current(this);
+        if (cur.panel.duration <= 1) { OT.Board.Ops.deletePanel(this); return; }
+        OT.Board.Ops.setDuration(this, cur.panel.duration - 1);
+        return;
+      }
       const f = this.frame;
       this.doStruct('Remove frame', () => {
         for (const l of this.project.layers) l.exposure.splice(f, 1);
@@ -1982,6 +2000,14 @@
       this.audioBuffer = this.audioPeaks = null;
       this.playIn = this.playOut = null;
       this.project = new OT.Project(opts);
+      if (opts && opts.board && OT.Board) {
+        // Storyboard Pro style start: a BG layer under layer A, one panel.
+        const p = this.project;
+        if (p.layers[0]) p.layers[0].name = 'A';
+        const bg = new OT.Layer('BG', 'vector');
+        p.layers.unshift(bg);
+        OT.Board.create(p);
+      }
       this.palette = new OT.Palette();
       this.frame = 0;
       this._activeLayer = this.project.layers[this.project.layers.length - 1];
@@ -2067,6 +2093,7 @@
       this.audioBuffer = this.audioPeaks = null;
       this.playIn = this.playOut = null;
       this.project = data.project;
+      if (this.project.board && OT.Board) OT.Board.normalize(this.project);
       if (data.palette) this.palette = OT.Palette.load(data.palette);
       this.frame = 0;
       this._activeLayer = this.project.layers[this.project.layers.length - 1];

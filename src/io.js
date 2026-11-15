@@ -118,6 +118,7 @@
       camera: { keyframes: p.camera.keyframes.map(k => ({ ...k })) },
       audio: p.audio || null,
       perspective: p.perspective,
+      board: p.board || undefined,
       workspace: captureWorkspace(app),
       layers: p.layers.map(l => {
         const cels = {};
@@ -148,6 +149,7 @@
       fps: data.fps, frameCount: data.frameCount, bg: data.bg, empty: true
     });
     p.camera = data.camera || { keyframes: [] };
+    if (data.board) p.board = data.board;      // storyboard mode
     p.audio = data.audio || null;
     if (data.perspective && data.perspective.vp1) p.perspective = Object.assign(OT.Project.defaultPerspective(), data.perspective);
     for (const ld of data.layers || []) {
@@ -712,6 +714,7 @@
     };
     // written by Finca Storyboard; kept exactly as it came in
     if (p.storyboard !== undefined) scene.storyboard = p.storyboard;
+    if (p.board) scene.board = p.board;        // storyboard mode
     return { scene: JSON.stringify(scene), entries: unique, commits, inScene, encoded };
   }
 
@@ -778,6 +781,7 @@
     });
     p.camera = data.camera || { keyframes: [] };
     if (data.storyboard !== undefined) p.storyboard = data.storyboard;
+    if (data.board) p.board = data.board;      // storyboard mode
     p.audio = null;
     if (data.audio) {
       p.audio = Object.assign({}, data.audio);

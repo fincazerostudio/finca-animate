@@ -70,10 +70,31 @@
     }
 
     /* ============================ menu bar ============================ */
+    // Storyboard Pro style commands; see src/board.js.
+    _boardMenu() {
+      const a = this.app, B = OT.Board, on = !!a.project.board;
+      if (!B) return [];
+      if (!on) return [
+        { label: 'Turn This Project into a Storyboard', fn: () => a.doStruct('Make storyboard', () => B.create(a.project)) }
+      ];
+      return [
+        { label: 'New Panel', sc: 'N', fn: () => B.Ops.newPanel(a) },
+        { label: 'Duplicate Panel', fn: () => B.Ops.duplicatePanel(a) },
+        { label: 'Delete Panel', fn: () => B.Ops.deletePanel(a) },
+        { sep: 1 },
+        { label: 'New Scene', fn: () => B.Ops.newScene(a) },
+        { sep: 1 },
+        { label: 'Previous Panel', sc: 'PgUp', fn: () => B.Ops.go(a, -1) },
+        { label: 'Next Panel', sc: 'PgDn', fn: () => B.Ops.go(a, 1) },
+        { sep: 1 },
+        { label: 'Play Animatic', sc: 'Enter', fn: () => a.playback.toggle() }
+      ];
+    }
     _fileMenu() {
       const a = this.app;
       const rows = [
         { label: 'New Project…', sc: 'Ctrl+N', fn: () => this.newProjectDialog() },
+        { label: 'New Storyboard', fn: () => a.newProject({ name: 'Storyboard', width: 1920, height: 1080, fps: 24, frameCount: 48, bg: '#ffffff', board: true }) },
         { label: 'Open Project…', sc: 'Ctrl+O', fn: () => a.openProject() },
         { label: 'Save Project', sc: 'Ctrl+S', fn: () => a.saveProject() },
         { label: 'Save Project As…', sc: 'Ctrl+Shift+S', fn: () => a.saveProject(true) },
@@ -214,6 +235,7 @@
           { sep: 1 },
           { label: 'Auto-Shade Layer (Light & Shade)…', fn: () => this.shadeDialog() }
         ]],
+        ['Storyboard', this._boardMenu()],
         ['Camera', [
           { label: 'Add / Update Camera Keyframe', fn: () => a.addCameraKey() },
           { label: 'Camera Editor…', fn: () => this.cameraDialog() },

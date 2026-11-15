@@ -14,7 +14,7 @@
     { name: 'HD 720p',       ratio: '16:9', w: 1280, h: 720,  fps: 24, frames: 48, bg: '#ffffff' },
     { name: 'Square Social', ratio: '1:1',  w: 1080, h: 1080, fps: 24, frames: 36, bg: '#ffffff' },
     { name: 'Vertical 9:16', ratio: '9:16', w: 1080, h: 1920, fps: 24, frames: 36, bg: '#ffffff' },
-    { name: 'Storyboard',    ratio: '16:9', w: 1280, h: 720,  fps: 12, frames: 24, bg: '#ffffff' },
+    { name: 'Storyboard',    ratio: '16:9', w: 1920, h: 1080, fps: 24, frames: 48, bg: '#ffffff', board: true },
     { name: 'Film 2K Scope', ratio: '2.39', w: 2048, h: 858,  fps: 24, frames: 48, bg: '#000000' },
     { name: 'Retro Pixel',   ratio: '16:9', w: 640,  h: 360,  fps: 12, frames: 24, bg: '#ffffff' }
   ];
@@ -329,7 +329,7 @@
             this.app.newProject({
               name: t.name,
               width: t.w, height: t.h, fps: t.fps,
-              frameCount: t.frames, bg: t.bg
+              frameCount: t.frames, bg: t.bg, board: !!t.board
             });
           })
         });

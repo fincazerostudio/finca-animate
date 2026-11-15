@@ -647,6 +647,12 @@ window.OT = window.OT || {};
       let n = this.exposure[f];
       if (!n) {
         n = this.nextNum++;
+        // Storyboard mode: a panel shows one drawing per layer, so a new
+        // drawing is exposed on the empty frames of the whole panel.
+        const span = OT.boardSpan ? OT.boardSpan(f) : null;
+        if (span) {
+          for (let k = span[0]; k <= span[1]; k++) if (!this.exposure[k]) this.exposure[k] = n;
+        }
         this.exposure[f] = n;
       }
       return this.ensureCel(n, w, h);
