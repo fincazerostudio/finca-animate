@@ -3,7 +3,7 @@
 const { app, BrowserWindow, Menu, shell, dialog, ipcMain, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const FincaZip = require('./finca-zip.js');
+const FincaStore = require('./finca-store.js');
 const Ffmpeg = require('./ffmpeg.js');
 const FzTheme = require('./fz-theme.js');
 
@@ -494,34 +494,6 @@ function setupUpdateIpc() {
 }
 
 /* ---- IPC bridge for the renderer (version, updates, file IO, pen window) ---- */
-/* ---- crash-safe file writes ----
-   A project is always written to a temp file in the same folder, flushed to
-   disk, and then renamed over the target. A crash or power loss leaves
-   either the old file or the new one, never a half-written one. The
-   previous version stays next to it as <name>.bak (a hard link to the old
-   file where the file system allows it, so it costs no copy). */
-function sleepSync(ms) {
-  try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); } catch (e) { /* ignore */ }
-}
-function replaceAtomic(tmp, file, keepBak) {
-  try {
-    if (keepBak && fs.existsSync(file)) {
-      const bak = file + '.bak';
-      try { fs.rmSync(bak, { force: true }); fs.linkSync(file, bak); }
-      catch (e) { fs.copyFileSync(file, bak); }
-    }
-    // Windows: the indexer, antivirus or a sync client may hold the target
-    // for a moment, which fails the rename with EPERM / EBUSY. Retry briefly.
-    for (let attempt = 0; ; attempt++) {
-      try { fs.renameSync(tmp, file); break; }
-      catch (e) {
-        if (attempt >= 6 || !/^(EPERM|EBUSY|EACCES)$/.test(e.code || '')) throw e;
-        sleepSync(40 << attempt);
-      }
-    }
-  } catch (e) { try { fs.unlinkSync(tmp); } catch (_) { /* ignore */ } throw e; }
-}
-
 /* ---- which files the renderer may touch ----
    Reads: .finca and .otoon projects (absolute paths only). The renderer
    never gets a path into a project's inside: an open .finca is a numbered
@@ -536,120 +508,8 @@ const isOtoon = f => typeof f === 'string' && /\.otoon$/i.test(f) && path.isAbso
 const isProject = f => isFinca(f) || isOtoon(f);
 function allowWrite(f) { if (isFinca(f)) writableFiles.add(path.resolve(f)); }
 
-const ENTRY_NAME = /^(scene\.json|thumbnail\.png|(drawings|media)(\/[A-Za-z0-9_][A-Za-z0-9_.\-]*)+)$/;
-const validEntry = n => typeof n === 'string' && n.length < 300 && ENTRY_NAME.test(n) && !/\.\./.test(n);
-
-/* ---- open .finca files (handles) ---- */
-const fincaHandles = new Map();     // id -> { id, path, entries, size, mtimeMs }
-let fincaSeq = 0;
-function fincaStat(fd) { const s = fs.fstatSync(fd); return { size: s.size, mtimeMs: s.mtimeMs }; }
-function fincaHandleFor(file) {
-  const full = path.resolve(file);
-  for (const h of fincaHandles.values()) if (h.path === full) return h;
-  const h = { id: ++fincaSeq, path: full, entries: null, size: -1, mtimeMs: -1 };
-  fincaHandles.set(h.id, h);
-  return h;
-}
-// Run fn(fd, entries) on a handle's file. The table of contents is re-read
-// if the file changed on disk since we last looked (replaced by another
-// program, restored from a backup...).
-function withFinca(h, fn) {
-  const fd = fs.openSync(h.path, 'r');
-  try {
-    const st = fincaStat(fd);
-    if (!h.entries || st.size !== h.size || st.mtimeMs !== h.mtimeMs) {
-      h.entries = FincaZip.readDirectory(fd);
-      h.size = st.size; h.mtimeMs = st.mtimeMs;
-    }
-    return fn(fd, h.entries);
-  } finally { fs.closeSync(fd); }
-}
-function fincaOpen(file) {
-  const h = fincaHandleFor(file);
-  h.entries = null;                                   // always a fresh look on open
-  const scene = withFinca(h, (fd, entries) => {
-    const e = entries.get('scene.json');
-    if (!e) throw new Error('not a Finca Animate project (no scene inside)');
-    return FincaZip.readEntry(fd, e).toString('utf8');
-  });
-  return { ok: true, id: h.id, scene, time: h.mtimeMs };
-}
-function fincaRead(id, names) {
-  const h = fincaHandles.get(id);
-  if (!h || !Array.isArray(names)) return [];
-  return withFinca(h, (fd, entries) => names.map(n => {
-    const e = validEntry(n) ? entries.get(n) : null;
-    if (!e) return null;
-    try { const b = FincaZip.readEntry(fd, e); return new Uint8Array(b.buffer, b.byteOffset, b.byteLength); }
-    catch (err) { console.error('finca: ' + err.message); return null; }
-  }));
-}
-// Write a whole .finca: scene + entries. An entry is fresh bytes (`data`),
-// fresh text (`text`), or `from: { id, name }` = copied untouched out of an
-// open project (usually the previous version of this same file).
-function fincaWrite(file, payload, keepBak) {
-  if (!payload || typeof payload.scene !== 'string' || !Array.isArray(payload.entries))
-    throw new Error('bad project data');
-  const dir = path.dirname(file);
-  const tmp = path.join(dir, '.' + path.basename(file) + '.tmp-' + process.pid);
-  const sources = new Map();          // handle id -> { fd, entries }
-  const source = id => {
-    if (sources.has(id)) return sources.get(id);
-    const h = fincaHandles.get(id);
-    if (!h) throw new Error('a drawing refers to a project that is no longer open');
-    const fd = fs.openSync(h.path, 'r');
-    const st = fincaStat(fd);
-    if (!h.entries || st.size !== h.size || st.mtimeMs !== h.mtimeMs) {
-      h.entries = FincaZip.readDirectory(fd); h.size = st.size; h.mtimeMs = st.mtimeMs;
-    }
-    const s = { fd, entries: h.entries };
-    sources.set(id, s);
-    return s;
-  };
-  let written = 0, copied = 0, entries, stat;
-  const out = fs.openSync(tmp, 'w');
-  try {
-    try {
-      const w = FincaZip.createWriter(out);
-      w.add('scene.json', Buffer.from(payload.scene, 'utf8'), true);
-      for (const e of payload.entries) {
-        if (!e || !validEntry(e.name) || e.name === 'scene.json') throw new Error('bad entry name ' + JSON.stringify(e && e.name));
-        if (e.from) {
-          let s = null;
-          try { s = source(e.from.id); } catch (err) { if (!e.optional) throw err; }
-          const src = s && validEntry(e.from.name) ? s.entries.get(e.from.name) : null;
-          if (!src) {
-            if (e.optional) continue;
-            throw new Error('drawing "' + e.from.name + '" is missing from its project file');
-          }
-          w.copy(s.fd, src, e.name); copied++;
-        } else if (typeof e.text === 'string') {
-          w.add(e.name, Buffer.from(e.text, 'utf8'), true); written++;
-        } else if (e.data && e.data.byteLength != null) {
-          const d = e.data;
-          w.add(e.name, Buffer.from(d.buffer || d, d.byteOffset || 0, d.byteLength), /\.json$/.test(e.name)); written++;
-        } else throw new Error('entry "' + e.name + '" has no content');
-      }
-      entries = w.finish();
-      fs.fsyncSync(out);
-    } finally {
-      fs.closeSync(out);
-      for (const s of sources.values()) try { fs.closeSync(s.fd); } catch (e) { /* ignore */ }
-    }
-    // test hook: die between "new file complete" and "new file in place"
-    if (process.env.OPENTOON_TEST_CRASH === 'before-rename') process.kill(process.pid, 'SIGKILL');
-  } catch (e) { try { fs.unlinkSync(tmp); } catch (_) { /* ignore */ } throw e; }
-  replaceAtomic(tmp, file, keepBak);
-  // temp files left behind by a run that crashed mid-save are of no use now
-  try {
-    const stale = '.' + path.basename(file) + '.tmp-';
-    for (const n of fs.readdirSync(dir)) if (n.startsWith(stale)) fs.rmSync(path.join(dir, n), { force: true });
-  } catch (e) { /* ignore */ }
-  const h = fincaHandleFor(file);
-  stat = fs.statSync(file);
-  h.entries = entries; h.size = stat.size; h.mtimeMs = stat.mtimeMs;
-  return { ok: true, id: h.id, written, copied, bytes: stat.size };
-}
+// Opening, reading and crash-safe saving of .finca files: electron/finca-store.js
+const fincaOpen = FincaStore.open, fincaRead = FincaStore.read, fincaWrite = FincaStore.write;
 
 function setupIpc() {
   // normal launches answer "no render job" (render mode registers its own first)
@@ -750,7 +610,7 @@ function setupIpc() {
   ipcMain.on('opentoon:finca-read-sync', (e, id, name) => {
     try { e.returnValue = fincaRead(id, [name])[0] || null; } catch (err) { e.returnValue = null; }
   });
-  ipcMain.handle('opentoon:finca-close', (_e, id) => { fincaHandles.delete(id); return true; });
+  ipcMain.handle('opentoon:finca-close', (_e, id) => FincaStore.close(id));
   // Also allowed: a NEW .finca next to a project we may already write
   // (File > Save Increment makes scene_002.finca) -- never over an unknown file.
   const newSibling = f => !fs.existsSync(f) &&

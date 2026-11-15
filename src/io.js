@@ -773,7 +773,7 @@
   // scene.json (+ its source) -> { project, palette, ... }. detach: read
   // every drawing into memory instead of leaving it in the file (used for
   // autosaves and in the browser, where the file may go away).
-  async function deserializeFinca(data, id, detach) {
+  async function deserializeFinca(data, id, detach, lost) {
     if (!data || data.format !== 'finca') throw new Error('Not a Finca Animate project');
     const p = new OT.Project({
       name: data.name, width: data.width, height: data.height,
@@ -824,7 +824,9 @@
       for (const num in (ld.cels || {})) {
         const cd = ld.cels[num] || {};
         const cel = new OT.Cel(Number(num), cd.w || p.width, cd.h || p.height, isVec ? 'vector' : 'raster');
-        if (cd.src) (isVec ? vec : ras).push([cel, cd.src, cd]);
+        // `lost`: drawings a damaged file no longer holds. They open as empty
+        // drawings in their place on the timeline, with nothing to copy later.
+        if (cd.src && !(lost && lost.has(cd.src))) (isVec ? vec : ras).push([cel, cd.src, cd]);
         layer.cels[num] = cel;
       }
       p.layers.push(layer);
@@ -878,9 +880,10 @@
     if (!r || !r.ok) throw new Error((r && r.error) || 'read failed');
     let data;
     try { data = JSON.parse(r.scene); } catch (e) { throw new Error('Not a Finca Animate project'); }
-    const d = await deserializeFinca(data, r.id, !!detach);
+    const d = await deserializeFinca(data, r.id, !!detach, r.damaged && r.damaged.lost ? new Set(r.damaged.lost) : null);
     if (typeof target === 'string' && !detach) pathIds.set(target, r.id);
     d.time = r.time;
+    if (r.damaged) d.damaged = r.damaged;      // cut-short file: opened from what was still there
     return d;
   }
 
@@ -969,7 +972,10 @@
     // crash-safe autosave: a real file on desktop, localStorage in the browser
     autosave(app) {
       if (desktopFS()) {
-        queued(() => writeFinca(app, { autosave: true })).catch(e => console.error('autosave failed: ' + e.message));
+        queued(() => writeFinca(app, { autosave: true })).catch(e => {
+          console.error('autosave failed: ' + e.message);
+          if (app && app._saveTrouble) app._saveTrouble(e, true);      // never fail silently
+        });
         return true;
       }
       try {
