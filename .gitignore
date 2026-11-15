@@ -5,3 +5,4 @@ dist/
 tests/*.png
 .DS_Store
 Thumbs.db
+tests/storyboard.pdf
