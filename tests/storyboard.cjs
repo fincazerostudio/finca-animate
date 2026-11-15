@@ -119,6 +119,26 @@ const path = require('path');
   checks.push(['save/load keeps the storyboard', res.io.same && res.io.mode]);
   checks.push(['strip shows a card with a thumbnail per panel', res.ui.cards === 3 && res.ui.thumbs === 3 && /Scene 1 · Panel 1/.test(res.ui.head)]);
 
+  // PDF export: a real PDF with one page per three panels
+  const pdfB64 = await page.evaluate(async () => {
+    const a = window.OT.app;
+    window.OT.Board.Ops.goTo(a, 0); window.OT.Board.Ops.setText(a, 'action', 'She runs (fast) across the street \\ into the rain.');
+    const blob = await window.OT.BoardPDF.build(a, { perPage: 3, paper: 'letter', captions: true });
+    const b = new Uint8Array(await blob.arrayBuffer());
+    let s = ''; for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]);
+    return btoa(s);
+  });
+  const fs = require('fs'), cp = require('child_process');
+  const pdfPath = path.join(__dirname, 'storyboard.pdf');
+  fs.writeFileSync(pdfPath, Buffer.from(pdfB64, 'base64'));
+  res.pdf = { header: fs.readFileSync(pdfPath).slice(0, 5).toString() };
+  try {
+    const info = cp.execFileSync('pdfinfo', [pdfPath], { encoding: 'utf8' });
+    res.pdf.pages = +(info.match(/Pages:\s+(\d+)/) || [])[1];
+    cp.execFileSync('pdftoppm', ['-png', '-r', '60', '-f', '1', '-l', '1', pdfPath, path.join(__dirname, 'storyboard-pdf')]);
+  } catch (e) { res.pdf.pages = e.code === 'ENOENT' ? 'skip' : 'error: ' + e.message; }
+  checks.push(['PDF export is a valid PDF (3 panels -> 1 page)', res.pdf.header === '%PDF-' && (res.pdf.pages === 1 || res.pdf.pages === 'skip')]);
+
   // a plain project is not in board mode
   res.plain = await page.evaluate(() => { window.OT.app.newProject({}); return document.body.classList.contains('board-mode'); });
   await page.waitForTimeout(100);

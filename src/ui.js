@@ -87,7 +87,10 @@
         { label: 'Previous Panel', sc: 'PgUp', fn: () => B.Ops.go(a, -1) },
         { label: 'Next Panel', sc: 'PgDn', fn: () => B.Ops.go(a, 1) },
         { sep: 1 },
-        { label: 'Play Animatic', sc: 'Enter', fn: () => a.playback.toggle() }
+        { label: 'Play Animatic', sc: 'Enter', fn: () => a.playback.toggle() },
+        { sep: 1 },
+        { label: 'Export Storyboard PDF…', fn: () => OT.BoardPDF && OT.BoardPDF.dialog(a) },
+        { label: 'Export Animatic Movie (MP4)…', fn: () => this.exportDialog('mp4') }
       ];
     }
     _fileMenu() {
