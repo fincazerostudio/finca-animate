@@ -8,27 +8,6 @@ const Ffmpeg = require('./ffmpeg.js');
 const FzTheme = require('./fz-theme.js');
 
 const isDev = process.argv.includes('--dev') || !app.isPackaged;
-
-// Pen + mouse on Linux: Chromium's native Wayland backend (Electron 44 /
-// Chromium 152) drops every mouse event once a tablet pen leaves proximity.
-// It hands pointer focus back to nobody, and since the mouse never left the
-// window the compositor sends no new wl_pointer.enter, so clicks, drags and
-// menus stop working until the window loses focus. Upstream Chromium has the
-// fix (WaylandEventSource::OnTabletToolProximityOut) but no Electron ships it
-// yet. Under XWayland the mouse keeps working and pen pressure still arrives,
-// so run there whenever XWayland is available. Chromium only honours the
-// platform on its real command line (app.commandLine is read too late), so
-// restart once with the flag before anything else happens. The launcher
-// passes it up front to skip the restart. An explicit --ozone-platform=...
-// (e.g. =wayland for testing) is left alone.
-const NEEDS_X11_RELAUNCH = process.platform === 'linux' &&
-  !!process.env.WAYLAND_DISPLAY && !!process.env.DISPLAY &&
-  !process.argv.some(a => /^--ozone-platform=/.test(a)) &&
-  !process.argv.includes('--render');
-if (NEEDS_X11_RELAUNCH) {
-  app.relaunch({ args: process.argv.slice(1).concat('--ozone-platform=x11') });
-  app.exit(0);
-}
 let win = null;
 let penWin = null;         // secondary canvas-only "pen display" window
 let splash = null;
@@ -924,9 +903,7 @@ catch (e) {
   renderJob = { failed: true };
 }
 
-if (NEEDS_X11_RELAUNCH) {
-  // restarting under XWayland (see the top of this file)
-} else if (renderJob && renderJob.failed) {
+if (renderJob && renderJob.failed) {
   // bad arguments: already reported, exiting
 } else if (renderJob && renderJob.help) {
   process.stdout.write(RENDER_USAGE + '\n');
