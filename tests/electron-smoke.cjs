@@ -17,6 +17,10 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const EXE = process.argv[2] || path.join(ROOT, 'dist', 'linux-unpacked', 'opentoon-studio');
 const EXTRA_ARGS = process.argv.slice(3);
+// On a Wayland desktop the app restarts itself under XWayland unless a platform
+// is given (see electron/main.js); Playwright cannot follow that restart.
+if (process.platform === 'linux' && process.env.WAYLAND_DISPLAY &&
+    !EXTRA_ARGS.some(a => /^--ozone-platform=/.test(a))) EXTRA_ARGS.push('--ozone-platform=x11');
 const PKG = require(path.join(ROOT, 'package.json'));
 
 const results = [];

@@ -153,10 +153,18 @@ test suite, the packaged-app GUI smoke test and installs; any failure leaves
 the installed version untouched and points at a log under
 `~/.local/opt/opentoon-studio/logs/`.
 
-The launcher starts native Wayland when available. Set
-`OPENTOON_OZONE_PLATFORM=x11` to force XWayland (e.g. if a tablet driver only
-reports pressure there). Settings, recents and the crash-recovery autosave live
-in `~/.config/opentoon/`.
+On a Wayland desktop the app runs under **XWayland** whenever XWayland is
+available. Chromium's native Wayland backend in Electron 44 drops every mouse
+event after a tablet pen has been used (the pen's proximity-out leaves pointer
+focus empty, and no new `wl_pointer.enter` arrives because the mouse never left
+the window), so mouse clicks, drags and menus die until the window is
+refocused. Under XWayland the mouse keeps working and pen pressure still
+arrives. If the app is started without an explicit `--ozone-platform=...`, it
+restarts itself once with `--ozone-platform=x11`; launchers can pass that flag
+directly to skip the restart. Pass `--ozone-platform=wayland` to run native
+Wayland anyway (for example, to check whether a newer Electron has picked up
+the upstream Chromium fix). Settings, recents and the crash-recovery autosave
+live in `~/.config/opentoon/`.
 
 ### Updates on Linux need approval
 
@@ -198,7 +206,7 @@ Chromium, Brave or Vivaldi on `PATH`, or use `OPENTOON_TEST_BROWSER=/path/to/bro
 ```
 npm test                                         # unit + headless browser tests
 node tests/electron-smoke.cjs                    # packaged app, real GUI session
-node tests/electron-smoke.cjs dist/linux-unpacked/opentoon-studio --ozone-platform-hint=auto
+node tests/electron-smoke.cjs dist/linux-unpacked/opentoon-studio --ozone-platform=wayland
 ```
 
 The smoke test launches the packaged app with a throwaway config directory and
