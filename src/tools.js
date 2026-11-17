@@ -1758,13 +1758,23 @@
   /* ============================== hand / zoom ============================== */
   class HandTool extends Tool {
     constructor() { super('hand'); }
-    pointerDown(pt) { this.last = { x: pt.sx, y: pt.sy }; }
+    pointerDown(pt, e, app) {
+      this.last = { x: pt.sx, y: pt.sy };
+      if (app && app.stage && app.stage.beginPan) app.stage.beginPan();
+    }
     pointerMove(pt, e, app) {
       if (!this.last) return;
       app.stage.panBy(pt.sx - this.last.x, pt.sy - this.last.y);
       this.last = { x: pt.sx, y: pt.sy };
     }
-    pointerUp() { this.last = null; }
+    pointerUp(pt, e, app) {
+      this.last = null;
+      if (app && app.stage && app.stage.endPan) app.stage.endPan();
+    }
+    onDeactivate(app) {
+      this.last = null;
+      if (app && app.stage && app.stage.endPan) app.stage.endPan();
+    }
   }
   class ZoomTool extends Tool {
     constructor() { super('zoom'); }
@@ -3073,7 +3083,9 @@
         const local = layerLocal(pt, r.layer, r.frame, app);
         r.cx = local.x - this.moveOff.x;
         r.cy = local.y - this.moveOff.y;
-        app.emit('render'); app.emit('overlayrender');
+        // the floating piece is drawn on the overlay; the stage itself only
+        // changes at the lift, which renders by itself
+        app.emit('overlayrender');
       } else if (this.mode === 'rrotate') {
         if (this.raster && !this.raster.lifted) this._liftRaster(app);
         const r = this.raster;
@@ -3081,7 +3093,7 @@
         const ang = Math.atan2(local.y - r.cy, local.x - r.cx);
         r.rot = this.startRot + (ang - this.startAng);
         if (e && e.shiftKey) r.rot = Math.round(r.rot / (Math.PI / 12)) * (Math.PI / 12);
-        app.emit('render'); app.emit('overlayrender');
+        app.emit('overlayrender');
       } else if (this.mode === 'rscale') {
         if (this.raster && !this.raster.lifted) this._liftRaster(app);
         // Drag a scale handle: keep the opposite corner fixed, derive new
@@ -3106,7 +3118,7 @@
         const ox = -this.oppA.x * nsx, oy = -this.oppA.y * nsy;
         r.cx = this.fixed.x + ox * rc - oy * rs;
         r.cy = this.fixed.y + ox * rs + oy * rc;
-        app.emit('render'); app.emit('overlayrender');
+        app.emit('overlayrender');
       }
     }
     _scheduleVMove(app) {
@@ -3117,6 +3129,14 @@
       // vector cels straight from cel.strokes; the cache is only stale and
       // gets rebuilt on pointerUp so thumbnails / onion skin / exports
       // catch up.
+      // Snippet path (one layer, affine mode): the selected strokes are
+      // hidden from the stage and the overlay draws them as one image, so
+      // nothing on the stage changes while dragging. Rewriting the strokes
+      // and re-rendering every layer each frame was the lag on big scenes;
+      // pointer-up (_flushVMove) applies the transform once.
+      const v = this.vt, tm = this.transformMode;
+      if (v && v.preview && !v.multi && (tm === 'uniform' || tm === 'freeform')
+          && this.vsel.length && this.vsel.every(st => st._lassoHidden)) return;
       if (this._vmoveRAF) return;
       this._vmoveRAF = requestAnimationFrame(() => {
         this._vmoveRAF = 0;

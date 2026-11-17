@@ -26,7 +26,7 @@
       this._installResize();
       this._installInput();
       app.on('render', () => this.render());
-      app.on('overlayrender', () => this.renderOverlay());
+      app.on('overlayrender', () => { if (!app._overlayFresh) this.renderOverlay(); });
     }
 
     /* ---------------- sizing ---------------- */
@@ -166,7 +166,7 @@
       this.view.zoom = U.clamp(this.view.zoom * factor, 0.02, 32);
       this.view.x = v.x - before.x * this.view.zoom;
       this.view.y = v.y - before.y * this.view.zoom;
-      this.render();
+      this._requestPaint();
     }
     panBy(dx, dy) {
       // Reject non-finite deltas defensively — a bogus screen delta would
@@ -176,7 +176,61 @@
       const d = this._unrotateDelta(dx, dy);
       this.view.x += d.dx;
       this.view.y += d.dy;
+      this._requestPaint();
+    }
+
+    /* ---------------- pan gestures ----------------
+       Drawing the stage means re-rendering every vector stroke of every
+       layer, which on a full scene costs far more than one display frame.
+       A pan does not change what is drawn, only where, so for the length
+       of a pan gesture the stage is painted once into a snapshot a bit
+       larger than the viewport and the snapshot is slid around; the real
+       render happens again on release (or when the pan leaves the margin,
+       or anything else asks for a render meanwhile). */
+    beginPan() { this._pan = { snap: null }; }
+    endPan() {
+      if (!this._pan) return;
+      this._pan = null;
+      if (this._paintRAF) { cancelAnimationFrame(this._paintRAF); this._paintRAF = 0; }
       this.render();
+    }
+    // View changed: paint once on the next frame (several input events
+    // usually arrive per frame). Outside a gesture this is a plain render.
+    _requestPaint() {
+      if (this._paintRAF) return;
+      this._paintRAF = requestAnimationFrame(() => {
+        this._paintRAF = 0;
+        if (this._pan) this._paintPan(); else this.render();
+      });
+    }
+    _paintPan() {
+      const g = this._pan, a = this.app;
+      if (!g || (a.playback && a.playback.playing)) { this.render(); return; }
+      const d = this.dpr, o = this.projectToScreen(0, 0);
+      let s = g.snap;
+      if (s && (s.dpr !== d || s.cw !== this.cw || s.ch !== this.ch
+          || s.zoom !== this.view.zoom || s.rot !== this.view.rot
+          || s.flipH !== !!this.flipH || s.flipV !== !!this.flipV
+          || Math.abs(o.x - s.ox) > s.m || Math.abs(o.y - s.oy) > s.m)) s = null;
+      if (!s) {
+        // margin: up to half the viewport on each side, kept under ~12 M
+        // device pixels (about 48 MB) so it stays cheap on a 4K pen display
+        const big = Math.max(this.cw, this.ch);
+        let m = Math.round(big * 0.5);
+        while (m > 32 && (this.cw + 2 * m) * (this.ch + 2 * m) * d * d > 12e6) m = Math.round(m * 0.8);
+        const cv = g.canvas || (g.canvas = document.createElement('canvas'));
+        cv.width = Math.round((this.cw + 2 * m) * d);
+        cv.height = Math.round((this.ch + 2 * m) * d);
+        this._paintStage(cv.getContext('2d'), cv.width, cv.height, m * d, m * d);
+        s = g.snap = { m, ox: o.x, oy: o.y, dpr: d, cw: this.cw, ch: this.ch,
+          zoom: this.view.zoom, rot: this.view.rot, flipH: !!this.flipH, flipV: !!this.flipV };
+      }
+      const ctx = this.ctx;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+      // whole device pixels keep the slid snapshot as sharp as the render
+      ctx.drawImage(g.canvas, Math.round((o.x - s.ox - s.m) * d), Math.round((o.y - s.oy - s.m) * d));
+      this.renderOverlay();
     }
 
     /* ---------------- compositing ---------------- */
@@ -262,10 +316,21 @@
     }
     /* ---------------- render ---------------- */
     render() {
-      const ctx = this.ctx, p = this.app.project;
+      // the stage may have changed: a pan in progress re-snapshots
+      if (this._pan) this._pan.snap = null;
+      if (this._paintRAF && !this._pan) { cancelAnimationFrame(this._paintRAF); this._paintRAF = 0; }
+      this._paintStage(this.ctx, this.canvas.width, this.canvas.height, 0, 0);
+      // active tool may draw on the cel directly; nothing else here
+      this.renderOverlay();
+    }
+    // Paint background, onion skin and layers into ctx (w x h device px),
+    // shifted by (offX, offY) device px; the pan snapshot uses the offset.
+    _paintStage(ctx, w, h, offX, offY) {
+      const p = this.app.project;
       ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+      ctx.clearRect(0, 0, w, h);
       this._applyView(ctx);
+      if (offX || offY) ctx.setTransform(new DOMMatrix([1, 0, 0, 1, offX, offY]).multiply(ctx.getTransform()));
       ctx.imageSmoothingEnabled = this.view.zoom < 3;
 
       // paper drop shadow
@@ -282,9 +347,6 @@
       // playback (would flicker) and when only one drawable layer exists.
       const focusOpts = this._focusComposite();
       this.compositeStage(this.app.frame, ctx, Object.assign({ bg: false, lazy: true }, focusOpts));
-
-      // active tool may draw on the cel directly; nothing else here
-      this.renderOverlay();
     }
 
     renderOverlay() {
@@ -482,6 +544,7 @@
         // middle / right button = pan
         if (e.button === 1 || e.button === 2) {
           this._panning = { sx: e.clientX, sy: e.clientY, vx: this.view.x, vy: this.view.y };
+          this.beginPan();
           return;
         }
         this.app.tools.pointerDown(pt, e);
@@ -493,9 +556,15 @@
             e.clientX - this._panning.sx, e.clientY - this._panning.sy);
           this.view.x = this._panning.vx + d.dx;
           this.view.y = this._panning.vy + d.dy;
-          this.render();
+          this._requestPaint();
           return;
         }
+        // Renders asked for while handling this move are queued to the next
+        // frame (App.emit): many moves arrive per frame.
+        this.app._paintDefer = true;
+        try { this._pointerMove(e); } finally { this.app._paintDefer = false; }
+      });
+      this._pointerMove = e => {
         // Prefer coalesced events for smooth high-frequency strokes, but keep
         // only the ones with real coordinates; fall back to the event itself.
         let batch = (e.getCoalescedEvents && e.getCoalescedEvents()) || [];
@@ -536,12 +605,16 @@
           if (this.app.tools.setPredicted) this.app.tools.setPredicted(projected);
         }
         this.cursorPt = pt;
-        if (!this.app.tools.dragging) this.renderOverlay();
+        if (!this.app.tools.dragging && !this._ovRAF) {
+          this._ovRAF = requestAnimationFrame(() => { this._ovRAF = 0; this.renderOverlay(); });
+        }
         this.app.ui.setCoord(this.cursorPt);
-      });
+      };
 
       const end = e => {
-        if (this._panning) { this._panning = false; return; }
+        if (this._panning) { this._panning = false; this.endPan(); return; }
+        // anything still queued from the last moves lands before the up
+        this.app.flushPaint();
         // A bogus (0,0) pointerup must not drag the final stroke point to the
         // corner -- fall back to the last good position instead.
         let pt;

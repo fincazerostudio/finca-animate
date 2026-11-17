@@ -167,6 +167,36 @@
       this._dirty = !!v;
       if (v) this._dirtySeq = (this._dirtySeq || 0) + 1;
     }
+    // Paint coalescing. A pen reports ~250 times a second but the screen
+    // only shows 60-144 frames, so while the stage is handling a pointer
+    // move (Stage sets _paintDefer) 'render' / 'overlayrender' are queued
+    // and run once on the next animation frame. Nothing is drawn any later
+    // than before: the browser paints at frame time either way.
+    emit(ev, data) {
+      if (ev === 'render' || ev === 'overlayrender') {
+        if (this._paintDefer) {
+          const q = this._paintQ || (this._paintQ = {});
+          q[ev] = true;
+          if (!this._paintRAF) this._paintRAF = requestAnimationFrame(() => this.flushPaint());
+          return;
+        }
+        // a direct render is fresher than a queued one
+        if (ev === 'render' && this._paintQ) this._paintQ.render = false;
+      }
+      super.emit(ev, data);
+    }
+    flushPaint() {
+      if (this._paintRAF) { cancelAnimationFrame(this._paintRAF); this._paintRAF = 0; }
+      const q = this._paintQ; this._paintQ = null;
+      if (!q) return;
+      if (q.render) super.emit('render');
+      if (q.overlayrender) {
+        // render() already painted the overlay; listeners (UI chip, pen
+        // window) still get their event, the stage skips the repaint
+        this._overlayFresh = !!q.render;
+        try { super.emit('overlayrender'); } finally { this._overlayFresh = false; }
+      }
+    }
     constructor() {
       super();
       OT.app = this;

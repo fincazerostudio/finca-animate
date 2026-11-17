@@ -509,11 +509,11 @@
       v.y = cy * (1 - s) + v.y * s;
       v.scale = ns;
       this._updateZoomLabel();
-      this.draw();
+      this._scheduleComposite();      // once per frame, not per pen event
     }
     _panLocal(dx, dy) {
       this.view.x += dx; this.view.y += dy;
-      this.draw();
+      this._scheduleComposite();
     }
     _resetView() {
       this.view = { scale: 1, x: 0, y: 0 };
