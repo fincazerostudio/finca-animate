@@ -207,6 +207,32 @@ const path = require('path');
   checks.push(['New Drawing covers the whole panel', au.fills]);
   checks.push(['Duplicate Panel copies the camera move', au.dupKey]);
 
+  // Copy a drawing from one panel, paste it into another: it fills the whole
+  // target panel (not just its first frame) and never spills into the next.
+  res.paste = await page.evaluate(() => {
+    const a = window.OT.app; a.newProject({}); OT.Board.create(a.project);
+    OT.Board.Ops.newPanel(a); OT.Board.Ops.newPanel(a);
+    const l = a.activeLayer(), p = a.project, sp = () => OT.Board.spans(p.board);
+    a.setFrame(0);
+    const cel = l.drawingAt(0, p.width, p.height);
+    cel.strokes.push({ id: 'cp', type: 'line', color: '#000', width: 6, opacity: 1, pts: [{ x: 10, y: 10, p: 1 }, { x: 90, y: 90, p: 1 }], closed: false });
+    const full = (i, n) => { const s = sp()[i]; for (let f = s.start; f <= s.end; f++) if (l.exposure[f] !== n) return false; return true; };
+    const empty = i => { const s = sp()[i]; for (let f = s.start; f <= s.end; f++) if (l.exposure[f]) return false; return true; };
+    a.timeline.selectedRuns = []; a.copyDrawing();
+    a.setFrame(sp()[1].start); a.pasteDrawing();
+    const single = full(1, l.exposure[sp()[1].start]) && l.exposure[sp()[1].start] !== l.exposure[0] && empty(2);
+    a.undo();
+    // a copied timeline run (the whole source panel), pasted mid-panel
+    const s0 = sp()[0];
+    a.timeline.selectedRuns = [{ layer: l, num: l.exposure[0], start: s0.start, end: s0.end }];
+    a.copyDrawing(); a.timeline.selectedRuns = [];
+    a.setFrame(sp()[1].start + 5); a.pasteDrawing();
+    const run = full(1, l.exposure[sp()[1].start]) && empty(2);
+    return { single, run };
+  });
+  checks.push(['Paste Drawing fills the whole storyboard panel', res.paste.single]);
+  checks.push(['a pasted panel-long run stays inside the target panel', res.paste.run]);
+
   // a plain project is not in board mode
   res.plain = await page.evaluate(() => { window.OT.app.newProject({}); return document.body.classList.contains('board-mode'); });
   await page.waitForTimeout(100);

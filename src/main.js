@@ -1141,6 +1141,15 @@
             c.dirty();
             tgt.cels[n] = c;
             const startF = baseFrame + f.frameOffset;
+            // Storyboard mode: a panel shows one drawing, so the paste fills
+            // the whole panel under its start frame, never spilling into
+            // the next panel (the copied run is the source panel's length).
+            const span = OT.boardSpan ? OT.boardSpan(Math.min(startF, this.project.frameCount - 1)) : null;
+            if (span) {
+              for (let fr = span[0]; fr <= span[1]; fr++) tgt.exposure[fr] = n;
+              pastedFrames += 1;
+              continue;
+            }
             for (let k = 0; k < f.length; k++) {
               const fr = startF + k;
               if (fr >= 0 && fr < this.project.frameCount) tgt.exposure[fr] = n;
@@ -1167,6 +1176,7 @@
         c.dirty();
         l.cels[n] = c;
         l.exposure[this.frame] = n;
+        this._fillPanel(l);            // storyboard: the whole panel, like Duplicate
       });
     }
     // Timeline "Add 12 frames": one undo step. In storyboard mode the frames
